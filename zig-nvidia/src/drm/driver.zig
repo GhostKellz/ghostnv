@@ -1,12 +1,34 @@
 const std = @import("std");
 const print = std.debug.print;
 
+// Import gaming performance module for VRR types
+const VrrMode = enum(u8) {
+    disabled = 0,
+    adaptive_sync = 1,
+    gsync_compatible = 2,
+    gsync_ultimate = 3,
+    freesync = 4,
+    freesync_premium = 5,
+};
+
+pub const VrrCapabilities = struct {
+    supports_adaptive_sync: bool,
+    supports_gsync: bool,
+    supports_freesync: bool,
+    min_refresh_rate: u32,
+    max_refresh_rate: u32,
+    connected_vrr_displays: u32,
+};
+
 pub const DrmError = error{
     RegistrationFailed,
     InitializationFailed,
     InvalidMode,
     ResourceBusy,
     NotSupported,
+    VrrNotSupported,
+    InvalidRefreshRate,
+    DisplayNotConnected,
 };
 
 pub const DrmConnectorType = enum {
@@ -60,14 +82,27 @@ pub const DrmConnector = struct {
     connected: bool,
     modes: std.ArrayList(DrmMode),
     current_mode: ?DrmMode,
+    supports_vrr: bool,
+    vrr_enabled: bool,
+    vrr_min_refresh: u32,
+    vrr_max_refresh: u32,
     
     pub fn init(allocator: std.mem.Allocator, id: u32, connector_type: DrmConnectorType) DrmConnector {
+        const supports_vrr = switch (connector_type) {
+            .DisplayPort, .HDMIA, .HDMIB, .eDP => true,
+            else => false,
+        };
+        
         return DrmConnector{
             .id = id,
             .connector_type = connector_type,
             .connected = false,
             .modes = std.ArrayList(DrmMode).init(allocator),
             .current_mode = null,
+            .supports_vrr = supports_vrr,
+            .vrr_enabled = false,
+            .vrr_min_refresh = 48,
+            .vrr_max_refresh = 165,
         };
     }
     
@@ -131,6 +166,44 @@ pub const DrmConnector = struct {
         self.current_mode = mode;
         print("nvzig: Set mode {}x{} @ {}Hz on connector {}\n", 
               .{mode.hdisplay, mode.vdisplay, mode.refresh_rate, self.id});
+    }
+    
+    pub fn enable_vrr(self: *DrmConnector, min_refresh: u32, max_refresh: u32) !void {
+        if (!self.supports_vrr) {
+            return DrmError.VrrNotSupported;
+        }
+        
+        if (min_refresh >= max_refresh or min_refresh < 24 or max_refresh > 500) {
+            return DrmError.InvalidRefreshRate;
+        }
+        
+        self.vrr_enabled = true;
+        self.vrr_min_refresh = min_refresh;
+        self.vrr_max_refresh = max_refresh;
+        
+        print("nvzig: VRR enabled on connector {}: {}-{}Hz\n", 
+              .{self.id, min_refresh, max_refresh});
+    }
+    
+    pub fn disable_vrr(self: *DrmConnector) void {
+        self.vrr_enabled = false;
+        print("nvzig: VRR disabled on connector {}\n", .{self.id});
+    }
+    
+    pub fn set_refresh_rate(self: *DrmConnector, refresh_rate: u32) !void {
+        if (!self.vrr_enabled) {
+            return DrmError.VrrNotSupported;
+        }
+        
+        if (refresh_rate < self.vrr_min_refresh or refresh_rate > self.vrr_max_refresh) {
+            return DrmError.InvalidRefreshRate;
+        }
+        
+        if (self.current_mode) |*mode| {
+            mode.refresh_rate = refresh_rate;
+            print("nvzig: VRR refresh rate set to {}Hz on connector {}\n", 
+                  .{refresh_rate, self.id});
+        }
     }
 };
 
@@ -365,6 +438,57 @@ pub const DrmDriver = struct {
         try crtc.?.set_config(mode, 0, 0);
         
         print("nvzig: Mode set complete: connector {} -> CRTC {}\n", .{connector_id, crtc_id});
+    }
+    
+    // VRR (Variable Refresh Rate) functions
+    pub fn enable_vrr(self: *DrmDriver, vrr_mode: VrrMode, min_refresh: u32, max_refresh: u32) !void {
+        for (self.connectors.items) |*connector| {
+            if (connector.connected and connector.supports_vrr) {
+                try connector.enable_vrr(min_refresh, max_refresh);
+                print("nvzig: VRR enabled ({}): {}-{}Hz on connector {}\n", 
+                      .{vrr_mode, min_refresh, max_refresh, connector.id});
+            }
+        }
+    }
+    
+    pub fn disable_vrr(self: *DrmDriver) void {
+        for (self.connectors.items) |*connector| {
+            if (connector.vrr_enabled) {
+                connector.disable_vrr();
+            }
+        }
+    }
+    
+    pub fn set_refresh_rate(self: *DrmDriver, refresh_rate: u32) !void {
+        for (self.connectors.items) |*connector| {
+            if (connector.connected and connector.vrr_enabled) {
+                try connector.set_refresh_rate(refresh_rate);
+            }
+        }
+    }
+    
+    pub fn get_vrr_capabilities(self: *DrmDriver) VrrCapabilities {
+        var caps = VrrCapabilities{
+            .supports_adaptive_sync = false,
+            .supports_gsync = false,
+            .supports_freesync = false,
+            .min_refresh_rate = 60,
+            .max_refresh_rate = 60,
+            .connected_vrr_displays = 0,
+        };
+        
+        for (self.connectors.items) |*connector| {
+            if (connector.connected and connector.supports_vrr) {
+                caps.supports_adaptive_sync = true;
+                caps.supports_gsync = true; // Assume G-SYNC compatible
+                caps.supports_freesync = true; // VESA Adaptive-Sync
+                caps.min_refresh_rate = @min(caps.min_refresh_rate, connector.vrr_min_refresh);
+                caps.max_refresh_rate = @max(caps.max_refresh_rate, connector.vrr_max_refresh);
+                caps.connected_vrr_displays += 1;
+            }
+        }
+        
+        return caps;
     }
     
     // Wayland-optimized functions

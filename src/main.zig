@@ -13,6 +13,7 @@ const Command = enum {
     audio,
     version,
     clean,
+    @"generate-headers",
 };
 
 pub fn main() !void {
@@ -44,6 +45,7 @@ pub fn main() !void {
         .audio => try handle_audio(allocator),
         .version => try handle_version(allocator),
         .clean => try handle_clean(allocator),
+        .@"generate-headers" => try handle_generate_headers(allocator),
     }
 }
 
@@ -194,4 +196,45 @@ fn handle_clean(allocator: std.mem.Allocator) !void {
     // This would typically call make clean or remove specific directories
     print("Clean operation would be implemented here\n");
     print("For now, run: make clean\n");
+}
+
+fn handle_generate_headers(allocator: std.mem.Allocator) !void {
+    print("Generating C FFI headers...\n");
+    
+    // Create output directory
+    std.fs.cwd().makePath("zig-out/include") catch |err| {
+        if (err != error.PathAlreadyExists) {
+            return err;
+        }
+    };
+    
+    // Read the header template from the scripts directory
+    const header_generator = @import("../scripts/generate_headers.zig");
+    _ = header_generator;
+    
+    // Call the external script
+    var child = std.process.Child.init(&.{"zig", "run", "scripts/generate_headers.zig", "--", "generate-headers"}, allocator);
+    child.cwd = std.fs.cwd();
+    
+    const result = child.spawnAndWait() catch {
+        print("Error: Failed to run header generator script\n");
+        print("Run manually: zig run scripts/generate_headers.zig -- generate-headers\n");
+        return;
+    };
+    
+    switch (result) {
+        .Exited => |code| {
+            if (code == 0) {
+                print("FFI headers generated successfully!\n");
+                print("Files created:\n");
+                print("  - zig-out/include/ghostnv_ffi.h\n");
+                print("  - zig-out/ghostnv.pc\n");
+            } else {
+                print("Header generation failed with exit code: {}\n", .{code});
+            }
+        },
+        else => {
+            print("Header generation process terminated unexpectedly\n");
+        },
+    }
 }

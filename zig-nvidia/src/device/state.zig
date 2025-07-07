@@ -162,7 +162,7 @@ pub const NvzigDevice = struct {
         print("nvzig: Device {} closed (count: {})\n", .{self.index, self.open_count});
     }
     
-    pub fn suspend(self: *NvzigDevice) !void {
+    pub fn suspend_device(self: *NvzigDevice) !void {
         if (self.state == .Shutdown) return;
         
         print("nvzig: Suspending device {}\n", .{self.index});
