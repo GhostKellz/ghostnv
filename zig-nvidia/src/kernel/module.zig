@@ -486,7 +486,7 @@ pub const GPUCommand = extern struct {
 
 // Test functions
 test "kernel module init" {
-    const allocator = std.testing.allocator;
+    _ = std.testing.allocator;
     
     // This test would require actual NVIDIA hardware
     // For CI/testing, we'd mock the device files

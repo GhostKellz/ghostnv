@@ -484,7 +484,7 @@ pub const InterruptController = struct {
     }
     
     pub fn enableHandler(self: *InterruptController, vector_num: u32, handler_id: u32) !void {
-        var handler_list = self.handlers.getPtr(vector_num) orelse return InterruptError.InvalidVector;
+        const handler_list = self.handlers.getPtr(vector_num) orelse return InterruptError.InvalidVector;
         
         for (handler_list.items) |*handler| {
             if (handler.handler_id == handler_id) {
@@ -498,7 +498,7 @@ pub const InterruptController = struct {
     }
     
     pub fn disableHandler(self: *InterruptController, vector_num: u32, handler_id: u32) !void {
-        var handler_list = self.handlers.getPtr(vector_num) orelse return InterruptError.InvalidVector;
+        const handler_list = self.handlers.getPtr(vector_num) orelse return InterruptError.InvalidVector;
         
         for (handler_list.items) |*handler| {
             if (handler.handler_id == handler_id) {

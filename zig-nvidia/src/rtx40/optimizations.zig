@@ -294,10 +294,7 @@ pub const RTX40Optimizer = struct {
     
     // Low-level optimization implementations
     
-    fn setMemoryClockOffset(self: *RTX40Optimizer, device_id: u32, offset_mhz: i32) !void {
-        _ = self;
-        _ = device_id;
-        _ = offset_mhz;
+    fn setMemoryClockOffset(_: *RTX40Optimizer, _: u32, offset_mhz: i32) !void {
         std.log.debug("Memory clock offset set to +{}MHz", .{offset_mhz});
     }
     
@@ -577,7 +574,7 @@ test "RTX 40 optimizer" {
         .devices = undefined,
     };
     
-    var optimizer = RTX40Optimizer.init(allocator, &mock_kernel) catch return;
+    const optimizer = RTX40Optimizer.init(allocator, &mock_kernel) catch return;
     
     try std.testing.expect(optimizer.architecture == .rtx_4090);
 }

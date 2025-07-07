@@ -157,25 +157,25 @@ pub const PciDevice = struct {
         if (bytes_read < 64) return PciError.InvalidDevice;
         
         // Parse PCI configuration header
-        self.device_id.vendor_id = std.mem.readIntLittle(u16, config_data[0..2]);
-        self.device_id.device_id = std.mem.readIntLittle(u16, config_data[2..4]);
+        self.device_id.vendor_id = std.mem.readInt(u16, config_data[0..2], .little);
+        self.device_id.device_id = std.mem.readInt(u16, config_data[2..4], .little);
         self.revision_id = config_data[8];
         self.prog_if = config_data[9];
         self.subclass_code = config_data[10];
         self.class_code = config_data[11];
         
         // Read BARs
-        self.bar0 = std.mem.readIntLittle(u32, config_data[16..20]);
-        self.bar1 = std.mem.readIntLittle(u32, config_data[20..24]);
-        self.bar2 = std.mem.readIntLittle(u32, config_data[24..28]);
-        self.bar3 = std.mem.readIntLittle(u32, config_data[28..32]);
-        self.bar4 = std.mem.readIntLittle(u32, config_data[32..36]);
-        self.bar5 = std.mem.readIntLittle(u32, config_data[36..40]);
+        self.bar0 = std.mem.readInt(u32, config_data[16..20], .little);
+        self.bar1 = std.mem.readInt(u32, config_data[20..24], .little);
+        self.bar2 = std.mem.readInt(u32, config_data[24..28], .little);
+        self.bar3 = std.mem.readInt(u32, config_data[28..32], .little);
+        self.bar4 = std.mem.readInt(u32, config_data[32..36], .little);
+        self.bar5 = std.mem.readInt(u32, config_data[36..40], .little);
         
         // Read subsystem IDs
         if (bytes_read >= 48) {
-            self.device_id.subsystem_vendor_id = std.mem.readIntLittle(u16, config_data[44..46]);
-            self.device_id.subsystem_device_id = std.mem.readIntLittle(u16, config_data[46..48]);
+            self.device_id.subsystem_vendor_id = std.mem.readInt(u16, config_data[44..46], .little);
+            self.device_id.subsystem_device_id = std.mem.readInt(u16, config_data[46..48], .little);
         }
         
         // Determine NVIDIA architecture if this is an NVIDIA device
@@ -191,13 +191,13 @@ pub const PciDevice = struct {
         // Device ID ranges for different architectures
         // This is a simplified mapping - real implementation would be more comprehensive
         return switch (device_id) {
-            0x1000...0x1FFF => .kepler,
+            0x1000...0x12FF => .kepler,
             0x1300...0x13FF => .maxwell,
             0x1B00...0x1BFF => .pascal,
             0x1C00...0x1CFF => .pascal,
             0x1D00...0x1DFF => .volta,
             0x1E00...0x1FFF => .turing,
-            0x2000...0x2FFF => .ampere,
+            0x2000...0x25FF => .ampere,
             0x2600...0x26FF => .ada,
             0x2700...0x27FF => .hopper,
             0x2800...0x28FF => .blackwell,
@@ -294,14 +294,14 @@ pub const PciDevice = struct {
         var cmd_data: [2]u8 = undefined;
         _ = try config_file.readAll(&cmd_data);
         
-        var cmd = std.mem.readIntLittle(u16, &cmd_data);
+        var cmd = std.mem.readInt(u16, &cmd_data, .little);
         
         // Set bus master enable bit (bit 2)
         cmd |= 0x0004;
         
         // Write back
         try config_file.seekTo(0x04);
-        std.mem.writeIntLittle(u16, &cmd_data, cmd);
+        std.mem.writeInt(u16, &cmd_data, cmd, .little);
         _ = try config_file.writeAll(&cmd_data);
     }
     
@@ -340,7 +340,7 @@ pub const PciEnumerator = struct {
     }
     
     pub fn scanPciDevices(self: *PciEnumerator) !void {
-        const pci_dir = fs.openDirAbsolute("/sys/bus/pci/devices", .{ .iterate = true }) catch |err| switch (err) {
+        var pci_dir = fs.openDirAbsolute("/sys/bus/pci/devices", .{ .iterate = true }) catch |err| switch (err) {
             error.FileNotFound => return PciError.DeviceNotFound,
             error.AccessDenied => return PciError.AccessDenied,
             else => return err,

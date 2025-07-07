@@ -511,7 +511,7 @@ pub const CommandQueueStats = struct {
 pub const CommandScheduler = struct {
     allocator: Allocator,
     queues: std.ArrayList(CommandQueue),
-    fences: std.HashMap(u32, Fence, std.hash_map.DefaultContext(u32), 80),
+    fences: std.HashMap(u32, Fence, std.hash_map.AutoContext(u32), 80),
     next_fence_id: std.atomic.Value(u32),
     memory_manager: *memory.MemoryManager,
     
@@ -519,7 +519,7 @@ pub const CommandScheduler = struct {
         return CommandScheduler{
             .allocator = allocator,
             .queues = std.ArrayList(CommandQueue).init(allocator),
-            .fences = std.HashMap(u32, Fence, std.hash_map.DefaultContext(u32), 80).init(allocator),
+            .fences = std.HashMap(u32, Fence, std.HashMap.DefaultContext(u32), std.HashMap.default_max_load_percentage).init(allocator),
             .next_fence_id = std.atomic.Value(u32).init(1),
             .memory_manager = memory_manager,
         };
@@ -569,7 +569,7 @@ pub const CommandScheduler = struct {
     
     pub fn submitWithFence(self: *CommandScheduler, queue_id: u32, commands: []const Command, engine: EngineType) !u32 {
         const fence_id = try self.createFence(engine);
-        var fence = self.fences.getPtr(fence_id).?;
+        const fence = self.fences.getPtr(fence_id).?;
         
         const queue = try self.getQueue(queue_id);
         

@@ -318,7 +318,8 @@ pub const DrmDevice = struct {
     }
     
     pub fn exists(self: *DrmDevice) bool {
-        return fs.accessAbsolute(self.dev_node, .{}) catch false;
+        fs.accessAbsolute(self.dev_node, .{}) catch return false;
+        return true;
     }
 };
 
@@ -388,7 +389,7 @@ pub const DrmDriver = struct {
     pub fn register(self: *DrmDriver) !void {
         if (self.registered) return;
         
-        print("GhostNV: Registering DRM driver '{}' v{}.{}\n", 
+        print("GhostNV: Registering DRM driver '{s}' v{}.{}\n", 
               .{self.name, self.major_version, self.minor_version});
         
         // Find available DRM card slot
@@ -469,14 +470,14 @@ pub const DrmDriver = struct {
         // In real implementation: mknod(device.dev_node, S_IFCHR | 0666, makedev(device.major, device.minor))
     }
     
-    fn registerWithDrmSubsystem(self: *DrmDriver) !void {
+    fn registerWithDrmSubsystem(_: *DrmDriver) !void {
         // In real kernel implementation, this would:
         // 1. Call drm_dev_alloc() to allocate DRM device
         // 2. Set up driver callbacks (open, close, ioctl, etc.)
         // 3. Call drm_dev_register() to register with DRM core
         // 4. Register framebuffer if console support needed
         
-        print("GhostNV: Registering with DRM subsystem\n");
+        print("GhostNV: Registering with DRM subsystem\n", .{});
         
         // Set up driver capabilities
         const capabilities = [_][]const u8{
@@ -496,7 +497,7 @@ pub const DrmDriver = struct {
     pub fn unregister(self: *DrmDriver) void {
         if (!self.registered) return;
         
-        print("nvzig: Unregistering DRM driver\n");
+        print("nvzig: Unregistering DRM driver\n", .{});
         
         // Clean up all resources
         for (self.crtcs.items) |*crtc| {
@@ -505,17 +506,17 @@ pub const DrmDriver = struct {
         
         // In real implementation, would call drm_dev_unregister
         self.registered = false;
-        print("nvzig: DRM driver unregistered\n");
+        print("nvzig: DRM driver unregistered\n", .{});
     }
     
-    fn init_hardware(self: *DrmDriver) !void {
-        print("nvzig: Initializing DRM hardware\n");
+    fn init_hardware(_: *DrmDriver) !void {
+        print("nvzig: Initializing DRM hardware\n", .{});
         
         // TODO: Initialize display controller
         // TODO: Set up display PLLs
         // TODO: Initialize DACs/encoders
         
-        print("nvzig: DRM hardware initialization complete\n");
+        print("nvzig: DRM hardware initialization complete\n", .{});
     }
     
     fn create_connectors(self: *DrmDriver) !void {
@@ -543,7 +544,7 @@ pub const DrmDriver = struct {
         // Modern GPUs typically have 4-6 CRTCs
         const crtc_count = 4;
         
-        for (0..crtc_count) |i| {
+        for (0..crtc_count) |_| {
             const crtc = DrmCrtc.init(self.next_id);
             self.next_id += 1;
             
@@ -648,14 +649,14 @@ pub const DrmDriver = struct {
     }
     
     // Wayland-optimized functions
-    pub fn atomic_commit(self: *DrmDriver) !void {
-        print("nvzig: Performing atomic commit (Wayland-optimized)\n");
+    pub fn atomic_commit(_: *DrmDriver) !void {
+        print("nvzig: Performing atomic commit (Wayland-optimized)\n", .{});
         // TODO: Implement atomic modesetting for smooth Wayland experience
     }
     
     pub fn get_plane_capabilities(self: *DrmDriver) void {
         _ = self;
-        print("nvzig: Querying display plane capabilities\n");
+        print("nvzig: Querying display plane capabilities\n", .{});
         // TODO: Return overlay/cursor plane information
     }
 };

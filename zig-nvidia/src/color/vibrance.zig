@@ -475,7 +475,7 @@ pub const VibranceEngine = struct {
     
     fn generate_hardware_luts(self: *VibranceEngine, profile: VibranceProfile) !void {
         // Generate gamma LUT
-        for (self.gamma_lut, 0..) |*value, i| {
+        for (&self.gamma_lut, 0..) |*value, i| {
             const normalized = @as(f32, @floatFromInt(i)) / 255.0;
             const gamma_corrected = std.math.pow(f32, normalized, 1.0 / profile.gamma);
             value.* = @intFromFloat(std.math.clamp(gamma_corrected * 65535.0, 0, 65535));
@@ -489,7 +489,7 @@ pub const VibranceEngine = struct {
             const brightness_factor = 1.0 + @as(f32, @floatFromInt(profile.brightness)) / 100.0;
             const contrast_factor = 1.0 + @as(f32, @floatFromInt(profile.contrast)) / 100.0;
             
-            var red = (input - 0.5) * contrast_factor + 0.5 + @as(f32, @floatFromInt(profile.brightness)) / 100.0;
+            var red = (input - 0.5) * contrast_factor + 0.5 + brightness_factor;
             var green = (input - 0.5) * contrast_factor + 0.5 + @as(f32, @floatFromInt(profile.brightness)) / 100.0;
             var blue = (input - 0.5) * contrast_factor + 0.5 + @as(f32, @floatFromInt(profile.brightness)) / 100.0;
             
@@ -550,13 +550,13 @@ pub const VibranceEngine = struct {
         std.log.debug("Applied NVIDIA hardware LUTs for digital vibrance");
     }
     
-    fn apply_drm_ctm(self: *VibranceEngine) !void {
+    fn apply_drm_ctm(_: *VibranceEngine) !void {
         // Apply color transformation matrix via DRM
         // This would use the DRM Color Transformation Matrix property
         std.log.debug("Applied DRM CTM for digital vibrance");
     }
     
-    fn apply_software_processing(self: *VibranceEngine) !void {
+    fn apply_software_processing(_: *VibranceEngine) !void {
         // Software-based processing - original implementation
         std.log.debug("Applied software processing for digital vibrance");
         
@@ -733,7 +733,7 @@ pub fn rgb_to_hsv(r: f32, g: f32, b: f32) [3]f32 {
     const delta = max_val - min_val;
     
     var h: f32 = 0;
-    var s: f32 = if (max_val != 0) delta / max_val else 0;
+    const s: f32 = if (max_val != 0) delta / max_val else 0;
     const v: f32 = max_val;
     
     if (delta != 0) {

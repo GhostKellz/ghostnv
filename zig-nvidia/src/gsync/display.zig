@@ -466,7 +466,7 @@ pub const DisplayInfo = struct {
 fn generateResponseTimeLUT() [256]u8 {
     var lut: [256]u8 = undefined;
     
-    for (lut, 0..) |*value, i| {
+    for (&lut, 0..) |*value, i| {
         // Generate a curve that represents typical LCD response characteristics
         const normalized = @as(f32, @floatFromInt(i)) / 255.0;
         const response = 1.0 - std.math.exp(-normalized * 5.0); // Exponential response curve
@@ -695,7 +695,7 @@ pub const GsyncManager = struct {
     }
     
     pub fn get_all_display_info(self: *GsyncManager) ![]DisplayInfo {
-        var info_list = try self.allocator.alloc(DisplayInfo, self.displays.items.len);
+        const info_list = try self.allocator.alloc(DisplayInfo, self.displays.items.len);
         
         for (self.displays.items, info_list) |*display, *info| {
             info.* = display.get_display_info();

@@ -8,7 +8,7 @@ pub fn main() !void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    print("=== GhostNV GPU Hardware Test ===\n");
+    print("=== GhostNV GPU Hardware Test ===\n", .{});
 
     // Test PCI enumeration
     var enumerator = hal.PciEnumerator.init(allocator);
@@ -22,7 +22,7 @@ pub fn main() !void {
     defer allocator.free(nvidia_gpus);
 
     if (nvidia_gpus.len == 0) {
-        print("❌ No NVIDIA GPUs detected\n");
+        print("❌ No NVIDIA GPUs detected\n", .{});
         return;
     }
 
@@ -40,21 +40,21 @@ pub fn main() !void {
 
         // Test memory detection
         if (gpu.memory_size > 0) {
-            print("  ✅ Memory detection: PASSED\n");
+            print("  ✅ Memory detection: PASSED\n", .{});
         } else {
-            print("  ❌ Memory detection: FAILED\n");
+            print("  ❌ Memory detection: FAILED\n", .{});
         }
 
         // Test architecture detection
         if (gpu.architecture != .unknown) {
-            print("  ✅ Architecture detection: PASSED\n");
+            print("  ✅ Architecture detection: PASSED\n", .{});
         } else {
-            print("  ❌ Architecture detection: FAILED\n");
+            print("  ❌ Architecture detection: FAILED\n", .{});
         }
     }
 
-    print("\n=== Test Summary ===\n");
-    print("PCI Enumeration: ✅ PASSED\n");
-    print("GPU Detection: ✅ PASSED\n");
-    print("Hardware Test: ✅ COMPLETED\n");
+    print("\n=== Test Summary ===\n", .{});
+    print("PCI Enumeration: ✅ PASSED\n", .{});
+    print("GPU Detection: ✅ PASSED\n", .{});
+    print("Hardware Test: ✅ COMPLETED\n", .{});
 }

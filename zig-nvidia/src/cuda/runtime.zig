@@ -146,7 +146,6 @@ pub const CudaModule = struct {
         // Parse PTX and extract functions
         // This is a simplified parser - real implementation would be more complex
         var lines = std.mem.split(u8, self.ptx_code, "\n");
-        var current_function: ?[]const u8 = null;
         
         while (lines.next()) |line| {
             const trimmed = std.mem.trim(u8, line, " \t");
@@ -199,7 +198,7 @@ pub const CudaContext = struct {
     flags: u32,
     
     pub fn init(allocator: Allocator, device_id: u32, command_scheduler: *command.CommandScheduler, flags: u32) !CudaContext {
-        var mem_manager = memory.DeviceMemoryManager.init(allocator, 24 * 1024 * 1024 * 1024); // 24GB
+        const mem_manager = memory.DeviceMemoryManager.init(allocator, 24 * 1024 * 1024 * 1024); // 24GB
         
         return CudaContext{
             .id = device_id,
@@ -320,7 +319,7 @@ pub const CudaContext = struct {
     
     pub fn launch_kernel(self: *CudaContext, module_id: u32, function_name: []const u8, 
                         grid_dim: [3]u32, block_dim: [3]u32, shared_mem: u32, stream_id: u32, 
-                        params: []const u64) !void {
+                        _: []const u64) !void {
         
         const module = self.get_module(module_id) orelse return CudaError.ModuleNotLoaded;
         const function = module.get_function(function_name) orelse return CudaError.FunctionNotFound;
@@ -409,7 +408,7 @@ pub const CudaRuntime = struct {
     pub fn create_context(self: *CudaRuntime, device_id: u32, flags: u32) !u32 {
         if (device_id >= self.devices.items.len) return CudaError.InvalidDevice;
         
-        var context = try CudaContext.init(self.allocator, device_id, self.command_scheduler, flags);
+        const context = try CudaContext.init(self.allocator, device_id, self.command_scheduler, flags);
         try self.contexts.append(context);
         
         return @intCast(self.contexts.items.len - 1);

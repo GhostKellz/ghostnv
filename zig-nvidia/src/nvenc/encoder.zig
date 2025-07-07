@@ -349,7 +349,7 @@ pub const NvencSession = struct {
         for (0..MAX_OUTPUT_BUFFERS) |i| {
             const region = try memory_manager.allocate(OUTPUT_BUFFER_SIZE, .device);
             
-            var output_buffer = try NvencOutputBuffer.init(
+            const output_buffer = try NvencOutputBuffer.init(
                 allocator,
                 @intCast(i),
                 region.gpu_address,
@@ -497,7 +497,7 @@ pub const NvencEncoder = struct {
             return NvencError.UnsupportedProfile;
         }
         
-        var session = try NvencSession.init(
+        const session = try NvencSession.init(
             self.allocator,
             self.next_session_id,
             config,
@@ -534,7 +534,7 @@ pub const NvencEncoder = struct {
         return null;
     }
     
-    pub fn get_caps(self: *NvencEncoder, codec: NvencCodec) NvencCaps {
+    pub fn get_caps(_: *NvencEncoder, codec: NvencCodec) NvencCaps {
         return NvencCaps{
             .codec = codec,
             .max_width = 8192,

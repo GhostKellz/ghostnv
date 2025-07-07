@@ -80,7 +80,7 @@ export fn nvzig_init_module() callconv(.C) c_int {
     };
     
     if (device_count == 0) {
-        print("nvzig: No compatible NVIDIA devices found\n");
+        print("nvzig: No compatible NVIDIA devices found\n", .{});
         return -1;
     }
     
@@ -89,7 +89,7 @@ export fn nvzig_init_module() callconv(.C) c_int {
     
     // Phase 2: Initialize devices
     global_state.devices = allocator.alloc(device.NvzigDevice, device_count) catch {
-        print("nvzig: Failed to allocate device array\n");
+        print("nvzig: Failed to allocate device array\n", .{});
         return -1;
     };
     
@@ -113,12 +113,12 @@ export fn nvzig_init_module() callconv(.C) c_int {
     }
     
     global_state.initialized = true;
-    print("nvzig: Driver initialization complete\n");
+    print("nvzig: Driver initialization complete\n", .{});
     return 0;
 }
 
 export fn nvzig_exit_module() callconv(.C) void {
-    print("nvzig: Shutting down pure Zig NVIDIA driver\n");
+    print("nvzig: Shutting down pure Zig NVIDIA driver\n", .{});
     
     if (!global_state.initialized) return;
     
@@ -135,15 +135,11 @@ export fn nvzig_exit_module() callconv(.C) void {
     }
     
     global_state.deinit();
-    print("nvzig: Driver shutdown complete\n");
+    print("nvzig: Driver shutdown complete\n", .{});
 }
 
 // Kernel module macros equivalent
-comptime {
-    // This would be handled by kernel build system in real implementation
-    @export(nvzig_init_module, .{ .name = "init_module" });
-    @export(nvzig_exit_module, .{ .name = "cleanup_module" });
-}
+// Functions are already exported with export fn declarations above
 
 // Module information
 export const __module_license: [*:0]const u8 = "GPL v2";
@@ -153,7 +149,7 @@ export const __module_version: [*:0]const u8 = "1.0.0";
 
 // Test functions for userspace testing
 pub fn main() !void {
-    print("nvzig: Running in userspace test mode\n");
+    print("nvzig: Running in userspace test mode\n", .{});
     
     // Test initialization
     const result = nvzig_init_module();

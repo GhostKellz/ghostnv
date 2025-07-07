@@ -169,7 +169,7 @@ pub const NvKmsInterface = struct {
             .reserved = std.mem.zeroes([4]u32),
         };
         
-        var reply = NvKmsAllocDeviceReply{
+        const reply = NvKmsAllocDeviceReply{
             .device_handle = NvKmsDeviceHandle{ .device_id = 0, .fd = -1 },
             .gpu_id = 0,
             .max_displays = 0,
@@ -185,7 +185,7 @@ pub const NvKmsInterface = struct {
         );
         
         if (result != 0) {
-            return switch (linux.getErrno(result)) {
+            return switch (std.posix.errno(result)) {
                 .NODEV => NvKmsError.DeviceNotFound,
                 .ACCES => NvKmsError.PermissionDenied,
                 .INVAL => NvKmsError.InvalidParameter,
@@ -215,7 +215,7 @@ pub const NvKmsInterface = struct {
         );
         
         if (result != 0) {
-            return switch (linux.getErrno(result)) {
+            return switch (std.posix.errno(result)) {
                 .INVAL => NvKmsError.InvalidDevice,
                 else => NvKmsError.HardwareError,
             };
@@ -248,7 +248,7 @@ pub const NvKmsInterface = struct {
         );
         
         if (result != 0) {
-            return switch (linux.getErrno(result)) {
+            return switch (std.posix.errno(result)) {
                 .INVAL => NvKmsError.InvalidParameter,
                 .NODEV => NvKmsError.DeviceNotFound,
                 .NOTSUP => NvKmsError.NotSupported,
@@ -277,7 +277,7 @@ pub const NvKmsInterface = struct {
             .reserved = std.mem.zeroes([4]u32),
         };
         
-        var reply = NvKmsGetDisplayAttributeReply{
+        const reply = NvKmsGetDisplayAttributeReply{
             .value = 0,
             .min_value = 0,
             .max_value = 0,
@@ -292,7 +292,7 @@ pub const NvKmsInterface = struct {
         );
         
         if (result != 0) {
-            return switch (linux.getErrno(result)) {
+            return switch (std.posix.errno(result)) {
                 .INVAL => NvKmsError.InvalidParameter,
                 .NODEV => NvKmsError.DeviceNotFound,
                 .NOTSUP => NvKmsError.NotSupported,
@@ -336,7 +336,7 @@ pub const NvKmsInterface = struct {
         );
         
         if (result != 0) {
-            return switch (linux.getErrno(result)) {
+            return switch (std.posix.errno(result)) {
                 .INVAL => NvKmsError.InvalidParameter,
                 .NODEV => NvKmsError.DeviceNotFound,
                 .NOTSUP => NvKmsError.NotSupported,

@@ -37,7 +37,7 @@ const CliArgs = struct {
     auto_detect: bool = false,
     real_time: bool = false,
     
-    pub fn parse(allocator: std.mem.Allocator, args: [][]const u8) !CliArgs {
+    pub fn parse(_: std.mem.Allocator, args: [][]const u8) !CliArgs {
         if (args.len < 2) {
             return CliArgs{ .command = .help };
         }
@@ -142,7 +142,7 @@ fn print_help() void {
         \\  Gaming, Competitive, Cinema, Streaming, Photography
         \\  Counter-Strike, Valorant, Apex Legends, Fortnite, Cyberpunk 2077
         \\
-    );
+    , .{});
 }
 
 fn initialize_vibrance_engine(allocator: std.mem.Allocator) !vibrance.VibranceEngine {
@@ -161,8 +161,8 @@ fn handle_list_command(engine: *vibrance.VibranceEngine) !void {
     const profiles = try engine.list_profiles();
     defer engine.allocator.free(profiles);
     
-    print("📋 Available Vibrance Profiles:\n");
-    print("═══════════════════════════════\n");
+    print("📋 Available Vibrance Profiles:\n", .{});
+    print("═══════════════════════════════\n", .{});
     
     for (profiles) |profile_name| {
         if (engine.profiles.get(profile_name)) |profile| {
@@ -191,7 +191,7 @@ fn handle_apply_command(engine: *vibrance.VibranceEngine, profile_name: []const 
 
 fn handle_create_command(engine: *vibrance.VibranceEngine, args: CliArgs) !void {
     const profile_name = args.profile_name orelse {
-        print("❌ Profile name required for create command\n");
+        print("❌ Profile name required for create command\n", .{});
         return CliError.InvalidArgument;
     };
     
@@ -213,7 +213,7 @@ fn handle_create_command(engine: *vibrance.VibranceEngine, args: CliArgs) !void 
 }
 
 fn handle_auto_command(engine: *vibrance.VibranceEngine) !void {
-    print("🔍 Auto-detecting active application...\n");
+    print("🔍 Auto-detecting active application...\n", .{});
     
     // In a real implementation, this would scan active windows
     // For now, simulate with common game window titles
@@ -233,18 +233,18 @@ fn handle_auto_command(engine: *vibrance.VibranceEngine) !void {
         }
     }
     
-    print("ℹ️ No recognized game detected. Using 'Gaming' profile as fallback.\n");
+    print("ℹ️ No recognized game detected. Using 'Gaming' profile as fallback.\n", .{});
     try handle_apply_command(engine, "Gaming");
 }
 
 fn handle_adjust_command(engine: *vibrance.VibranceEngine, adjustment_str: []const u8) !void {
     const adjustment = std.fmt.parseInt(i8, adjustment_str, 10) catch {
-        print("❌ Invalid adjustment value. Use -50 to +100.\n");
+        print("❌ Invalid adjustment value. Use -50 to +100.\n", .{});
         return CliError.InvalidArgument;
     };
     
     if (engine.active_profile == null) {
-        print("❌ No active profile. Apply a profile first.\n");
+        print("❌ No active profile. Apply a profile first.\n", .{});
         return;
     }
     
@@ -256,8 +256,8 @@ fn handle_adjust_command(engine: *vibrance.VibranceEngine, adjustment_str: []con
 }
 
 fn handle_status_command(engine: *vibrance.VibranceEngine) !void {
-    print("📊 GhostVibrance Status\n");
-    print("═══════════════════════\n");
+    print("📊 GhostVibrance Status\n", .{});
+    print("═══════════════════════\n", .{});
     
     const stats = engine.get_performance_stats();
     
@@ -271,10 +271,10 @@ fn handle_status_command(engine: *vibrance.VibranceEngine) !void {
             print("   HDR: {s}\n", .{if (profile.hdr_enabled) "Enabled" else "Disabled"});
         }
     } else {
-        print("💤 No active profile (Digital vibrance disabled)\n");
+        print("💤 No active profile (Digital vibrance disabled)\n", .{});
     }
     
-    print("\n📈 Performance:\n");
+    print("\n📈 Performance:\n", .{});
     print("   Last processing time: {:.2}ms\n", .{@as(f64, @floatFromInt(stats.processing_time_ns)) / 1_000_000.0});
     print("   Profiles loaded: {}\n", .{stats.profiles_loaded});
     print("   Frames processed: {}\n", .{stats.frames_processed});
@@ -315,7 +315,7 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
     
-    const cli_args = try CliArgs.parse(allocator, args);
+    const cli_args = try CliArgs.parse(allocator, @as([][]const u8, @ptrCast(args)));
     
     switch (cli_args.command) {
         .help => {
@@ -329,7 +329,7 @@ pub fn main() !void {
     var engine = initialize_vibrance_engine(allocator) catch |err| {
         switch (err) {
             drm.DrmError.RegistrationFailed => {
-                print("❌ Failed to initialize display driver. Run as root or check permissions.\n");
+                print("❌ Failed to initialize display driver. Run as root or check permissions.\n", .{});
                 return CliError.PermissionDenied;
             },
             else => {
@@ -344,7 +344,7 @@ pub fn main() !void {
         .list => try handle_list_command(&engine),
         .apply => {
             const profile_name = cli_args.profile_name orelse {
-                print("❌ Profile name required for apply command\n");
+                print("❌ Profile name required for apply command\n", .{});
                 return CliError.InvalidArgument;
             };
             try handle_apply_command(&engine, profile_name);
@@ -352,7 +352,7 @@ pub fn main() !void {
         .create => try handle_create_command(&engine, cli_args),
         .delete => {
             const profile_name = cli_args.profile_name orelse {
-                print("❌ Profile name required for delete command\n");
+                print("❌ Profile name required for delete command\n", .{});
                 return CliError.InvalidArgument;
             };
             if (engine.profiles.remove(profile_name)) {
@@ -364,14 +364,14 @@ pub fn main() !void {
         .auto => try handle_auto_command(&engine),
         .adjust => {
             const adjustment_str = cli_args.profile_name orelse {
-                print("❌ Adjustment value required\n");
+                print("❌ Adjustment value required\n", .{});
                 return CliError.InvalidArgument;
             };
             try handle_adjust_command(&engine, adjustment_str);
         },
         .disable => {
             try engine.disable_vibrance();
-            print("✅ Digital vibrance disabled\n");
+            print("✅ Digital vibrance disabled\n", .{});
         },
         .status => try handle_status_command(&engine),
         .monitor => try handle_monitor_command(&engine, cli_args.auto_detect),

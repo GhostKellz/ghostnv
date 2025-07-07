@@ -82,7 +82,9 @@ const BenchmarkSuite = struct {
 fn benchmark_command_submission(allocator: std.mem.Allocator) !BenchmarkResult {
     const iterations = 10000;
     
-    var scheduler = try command.CommandScheduler.init(allocator);
+    var memory_manager = try memory.MemoryManager.init(allocator);
+    defer memory_manager.deinit();
+    var scheduler = try command.CommandScheduler.init(allocator, &memory_manager);
     defer scheduler.deinit();
     
     var builder = command.CommandBuilder.init(&scheduler, allocator);
@@ -148,7 +150,9 @@ fn benchmark_memory_allocation(allocator: std.mem.Allocator) !BenchmarkResult {
 }
 
 fn benchmark_cuda_runtime(allocator: std.mem.Allocator) !BenchmarkResult {
-    var scheduler = try command.CommandScheduler.init(allocator);
+    var memory_manager = try memory.MemoryManager.init(allocator);
+    defer memory_manager.deinit();
+    var scheduler = try command.CommandScheduler.init(allocator, &memory_manager);
     defer scheduler.deinit();
     
     var runtime = cuda.CudaRuntime.init(allocator, &scheduler);
@@ -193,7 +197,9 @@ fn benchmark_cuda_runtime(allocator: std.mem.Allocator) !BenchmarkResult {
 }
 
 fn benchmark_nvenc_encoder(allocator: std.mem.Allocator) !BenchmarkResult {
-    var scheduler = try command.CommandScheduler.init(allocator);
+    var memory_manager = try memory.MemoryManager.init(allocator);
+    defer memory_manager.deinit();
+    var scheduler = try command.CommandScheduler.init(allocator, &memory_manager);
     defer scheduler.deinit();
     
     var command_builder = command.CommandBuilder.init(&scheduler, allocator);
@@ -230,7 +236,9 @@ fn benchmark_nvenc_encoder(allocator: std.mem.Allocator) !BenchmarkResult {
 }
 
 fn benchmark_vrr_performance(allocator: std.mem.Allocator) !BenchmarkResult {
-    var scheduler = try command.CommandScheduler.init(allocator);
+    var memory_manager = try memory.MemoryManager.init(allocator);
+    defer memory_manager.deinit();
+    var scheduler = try command.CommandScheduler.init(allocator, &memory_manager);
     defer scheduler.deinit();
     
     var command_builder = command.CommandBuilder.init(&scheduler, allocator);
@@ -328,7 +336,7 @@ fn benchmark_shader_cache(allocator: std.mem.Allocator) !BenchmarkResult {
     };
 }
 
-fn benchmark_frame_generation(allocator: std.mem.Allocator) !BenchmarkResult {
+fn benchmark_frame_generation(_: std.mem.Allocator) !BenchmarkResult {
     var frame_gen = gaming.FrameGeneration.init();
     frame_gen.enabled = true;
     

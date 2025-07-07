@@ -23,8 +23,9 @@ pub fn main() !void {
     // Initialize CLI interface
     var cli = container.ContainerCLI.init(&runtime);
     
-    // Execute command
-    try cli.execute_command(args);
+    // Execute command  
+    const const_args = @as([][]const u8, @ptrCast(args));
+    try cli.execute_command(const_args);
 }
 
 fn print_help() !void {
@@ -66,5 +67,5 @@ fn print_help() !void {
         \\  • Real-time GPU monitoring
         \\  • Multi-GPU support
         \\
-    );
+    , .{});
 }

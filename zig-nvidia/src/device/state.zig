@@ -83,7 +83,7 @@ pub const NvzigDevice = struct {
         print("nvzig: Initializing hardware for device {}\n", .{self.index});
         
         // Enable PCI bus mastering
-        try self.pci_device.enable_bus_master();
+        try self.pci_device.enable_bus_master(self.allocator);
         
         // Map MMIO regions
         try self.map_mmio_regions();
@@ -97,14 +97,14 @@ pub const NvzigDevice = struct {
     fn map_mmio_regions(self: *NvzigDevice) !void {
         // Map BAR0 (MMIO registers)
         if (self.pci_device.bar0 != 0) {
-            self.mmio_size = try self.pci_device.get_bar_size(0);
+            self.mmio_size = try self.pci_device.get_bar_size(self.allocator, 0);
             self.mmio_base = self.pci_device.bar0 & 0xFFFFFFF0;
             print("nvzig: Mapped MMIO at 0x{X}, size: 0x{X}\n", .{self.mmio_base.?, self.mmio_size});
         }
         
         // Map BAR1 (Framebuffer)
         if (self.pci_device.bar1 != 0) {
-            self.framebuffer_size = try self.pci_device.get_bar_size(1);
+            self.framebuffer_size = try self.pci_device.get_bar_size(self.allocator, 1);
             self.framebuffer_base = self.pci_device.bar1 & 0xFFFFFFF0;
             print("nvzig: Mapped framebuffer at 0x{X}, size: 0x{X}\n", 
                   .{self.framebuffer_base.?, self.framebuffer_size});
@@ -118,7 +118,7 @@ pub const NvzigDevice = struct {
         if (self.mmio_base) |base| {
             // Simulate reading GPU identification registers
             _ = base;
-            print("nvzig: GPU architecture detection would happen here\n");
+            print("nvzig: GPU architecture detection would happen here\n", .{});
         }
         
         // Initialize GPU memory controller

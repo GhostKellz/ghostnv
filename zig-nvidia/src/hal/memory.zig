@@ -121,7 +121,7 @@ pub const MemoryRegion = struct {
         self.virtual_address = virt_addr;
         self.mapped = true;
         
-        std.log.debug("Mapped {} memory: 0x{X} -> 0x{X} ({} bytes)", .{
+        std.log.debug("Mapped {s} memory: 0x{X} -> 0x{X} ({} bytes)", .{
             self.memory_type.toString(),
             self.physical_address,
             virt_addr,
@@ -139,7 +139,7 @@ pub const MemoryRegion = struct {
             .coherent, .streaming => unmapDmaMemory(self.virtual_address.?, self.size),
         }
         
-        std.log.debug("Unmapped {} memory: 0x{X} ({} bytes)", .{
+        std.log.debug("Unmapped {s} memory: 0x{X} ({} bytes)", .{
             self.memory_type.toString(),
             self.virtual_address.?,
             self.size,
@@ -163,7 +163,7 @@ pub const MemoryRegion = struct {
     pub fn sync_for_cpu(self: *MemoryRegion) void {
         if (!self.flags.coherent and self.memory_type == .streaming) {
             // In real kernel module, use dma_sync_single_for_cpu
-            std.log.debug("Syncing {} memory for CPU access", .{self.memory_type.toString()});
+            std.log.debug("Syncing {s} memory for CPU access", .{self.memory_type.toString()});
         }
     }
     
@@ -192,7 +192,7 @@ pub const DmaBuffer = struct {
             .coherent = coherent,
         };
         
-        var region = MemoryRegion.init(phys_addr, size, mem_type, .general, flags);
+        const region = MemoryRegion.init(phys_addr, size, mem_type, .general, flags);
         
         const buffer = DmaBuffer{
             .allocator = allocator,
@@ -315,7 +315,7 @@ pub const MemoryPool = struct {
                 // Allocate from this block
                 const phys_addr = self.base_address + aligned_offset;
                 
-                var region = MemoryRegion.init(phys_addr, aligned_size, self.memory_type, usage, flags);
+                const region = MemoryRegion.init(phys_addr, aligned_size, self.memory_type, usage, flags);
                 try self.allocated_regions.append(region);
                 
                 // Update free block
@@ -521,7 +521,7 @@ pub const MemoryManager = struct {
         if (self.system_pool) |*pool| pool.deinit();
         if (self.gart_pool) |*pool| pool.deinit();
         
-        for (self.bar_pools) |*maybe_pool| {
+        for (&self.bar_pools) |*maybe_pool| {
             if (maybe_pool.*) |*pool| pool.deinit();
         }
         
@@ -564,7 +564,7 @@ pub const MemoryManager = struct {
     }
     
     pub fn allocateDmaBuffer(self: *MemoryManager, size: u64, coherent: bool) !*DmaBuffer {
-        var buffer = try DmaBuffer.init(self.allocator, size, coherent);
+        const buffer = try DmaBuffer.init(self.allocator, size, coherent);
         try self.dma_buffers.append(buffer);
         self.total_allocated += size;
         
@@ -602,7 +602,7 @@ pub const MemoryManager = struct {
             },
             .bar => {
                 // Find which BAR pool this belongs to
-                for (self.bar_pools) |*maybe_pool| {
+                for (&self.bar_pools) |*maybe_pool| {
                     if (maybe_pool.*) |*pool| {
                         if (region.physical_address >= pool.base_address and
                             region.physical_address < pool.base_address + pool.size) {
@@ -729,9 +729,7 @@ pub const DeviceMemoryManager = struct {
         return self.vram_base + offset;
     }
     
-    pub fn free_vram(self: *DeviceMemoryManager, address: u64, size: u64) void {
-        _ = address;
-        _ = size;
+    pub fn free_vram(_: *DeviceMemoryManager, _: u64, _: u64) void {
         // TODO: Implement proper VRAM free list
         std.log.debug("VRAM free (not implemented yet)");
     }

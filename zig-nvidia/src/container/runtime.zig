@@ -31,7 +31,7 @@ pub const ContainerRuntime = struct {
         std.log.info("Creating GPU container: {s}", .{config.name});
         
         // Create new namespace
-        const namespace = try self.create_namespace(config);
+        var namespace = try self.create_namespace(config);
         
         // Setup GPU device access
         if (config.gpu_access.enabled) {
@@ -169,8 +169,6 @@ pub const ContainerRuntime = struct {
     // Private implementation methods
     
     fn create_namespace(self: *ContainerRuntime, config: ContainerConfig) !ContainerNamespace {
-        _ = self;
-        
         const namespace_id = std.crypto.random.int(u32);
         
         // Create new namespaces (simplified - real implementation would use clone() with CLONE_NEW* flags)
@@ -206,10 +204,7 @@ pub const ContainerRuntime = struct {
         }
     }
     
-    fn enter_namespace(self: *ContainerRuntime, namespace: *ContainerNamespace) !void {
-        _ = self;
-        _ = namespace;
-        
+    fn enter_namespace(_: *ContainerRuntime, namespace: *ContainerNamespace) !void {
         // Real implementation would use setns() to enter namespaces
         std.log.info("Entering container namespace {}", .{namespace.id});
     }
@@ -486,7 +481,7 @@ pub const ContainerCLI = struct {
     
     fn handle_run_command(self: *ContainerCLI, args: [][]const u8) !void {
         if (args.len < 2) {
-            std.debug.print("Usage: ghostnv-container run <name> <image> [command...]\n");
+            std.debug.print("Usage: ghostnv-container run <name> <image> [command...]\n", .{});
             return;
         }
         
@@ -625,7 +620,7 @@ pub const ContainerCLI = struct {
             \\  ghostnv-container stats 1234
             \\  ghostnv-container devices
             \\
-        );
+        , .{});
     }
 };
 
