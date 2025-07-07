@@ -21,39 +21,39 @@ pub fn main() !void {
         }
     }
 
-    print("=== NVENC Hardware Encoding Test ===\n");
+    print("=== NVENC Hardware Encoding Test ===\n", .{});
     print("Codec: {s}\n", .{codec});
     print("Resolution: {s}\n", .{resolution});
 
     // Simulate NVENC capability detection
-    print("\n--- Testing NVENC Capabilities ---\n");
+    print("\n--- Testing NVENC Capabilities ---\n", .{});
     
     if (std.mem.eql(u8, codec, "h264")) {
-        print("✅ H.264 encoding: SUPPORTED\n");
-        print("  Max resolution: 4096x4096\n");
-        print("  Max framerate: 240 fps\n");
-        print("  B-frames: SUPPORTED\n");
+        print("✅ H.264 encoding: SUPPORTED\n", .{});
+        print("  Max resolution: 4096x4096\n", .{});
+        print("  Max framerate: 240 fps\n", .{});
+        print("  B-frames: SUPPORTED\n", .{});
     } else if (std.mem.eql(u8, codec, "h265")) {
-        print("✅ H.265 encoding: SUPPORTED\n");
-        print("  Max resolution: 8192x8192\n");
-        print("  Max framerate: 240 fps\n");
-        print("  10-bit: SUPPORTED\n");
+        print("✅ H.265 encoding: SUPPORTED\n", .{});
+        print("  Max resolution: 8192x8192\n", .{});
+        print("  Max framerate: 240 fps\n", .{});
+        print("  10-bit: SUPPORTED\n", .{});
     } else if (std.mem.eql(u8, codec, "av1")) {
-        print("✅ AV1 encoding: SUPPORTED (RTX 40 series)\n");
-        print("  Max resolution: 7680x4320\n");
-        print("  Max framerate: 120 fps\n");
-        print("  Hardware AV1: ENABLED\n");
+        print("✅ AV1 encoding: SUPPORTED (RTX 40 series)\n", .{});
+        print("  Max resolution: 7680x4320\n", .{});
+        print("  Max framerate: 120 fps\n", .{});
+        print("  Hardware AV1: ENABLED\n", .{});
     }
 
     // Simulate encoding test
-    print("\n--- Simulating Encoding Test ---\n");
-    print("Initializing encoder...\n");
+    print("\n--- Simulating Encoding Test ---\n", .{});
+    print("Initializing encoder...\n", .{});
     std.time.sleep(100 * std.time.ns_per_ms); // 100ms delay
     
-    print("Allocating GPU memory...\n");
+    print("Allocating GPU memory...\n", .{});
     std.time.sleep(50 * std.time.ns_per_ms);
     
-    print("Starting encoding session...\n");
+    print("Starting encoding session...\n", .{});
     std.time.sleep(200 * std.time.ns_per_ms);
     
     // Calculate simulated performance metrics
@@ -64,18 +64,18 @@ pub fn main() !void {
     const simulated_fps: f32 = 60.0;
     const throughput = @as(f32, @floatFromInt(pixels_per_frame)) * simulated_fps / 1_000_000.0; // Megapixels/sec
 
-    print("\n--- Encoding Results ---\n");
+    print("\n--- Encoding Results ---\n", .{});
     print("Resolution: {}x{}\n", .{ width, height });
     print("Framerate: {d:.1} fps\n", .{simulated_fps});
     print("Throughput: {d:.1} MP/s\n", .{throughput});
-    print("Latency: <16ms (real-time)\n");
+    print("Latency: <16ms (real-time)\n", .{});
     
     // Quality metrics
-    print("\n--- Quality Metrics ---\n");
-    print("Rate control: CBR/VBR supported\n");
-    print("B-frame count: 3\n");
-    print("Reference frames: 4\n");
-    print("Quality preset: Balanced\n");
+    print("\n--- Quality Metrics ---\n", .{});
+    print("Rate control: CBR/VBR supported\n", .{});
+    print("B-frame count: 3\n", .{});
+    print("Reference frames: 4\n", .{});
+    print("Quality preset: Balanced\n", .{});
 
-    print("\n✅ NVENC Test: PASSED\n");
+    print("\n✅ NVENC Test: PASSED\n", .{});
 }

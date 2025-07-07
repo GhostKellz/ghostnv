@@ -1,5 +1,6 @@
 const std = @import("std");
-const container = @import("../src/container/runtime.zig");
+const ghostnv = @import("ghostnv");
+const container = ghostnv.container_runtime;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

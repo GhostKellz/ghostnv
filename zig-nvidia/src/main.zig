@@ -7,6 +7,19 @@ const device = @import("device/state.zig");
 const memory = @import("hal/memory.zig");
 const drm = @import("drm/driver.zig");
 
+// Public exports for tools and tests
+pub const hal_pci = hal;
+pub const hal_memory = memory;
+pub const hal_command = @import("hal/command.zig");
+pub const hal_interrupt = @import("hal/interrupt.zig");
+pub const device_state = device;
+pub const drm_driver = drm;
+pub const color_vibrance = @import("color/vibrance.zig");
+pub const cuda_runtime = @import("cuda/runtime.zig");
+pub const nvenc_encoder = @import("nvenc/encoder.zig");
+pub const gaming_performance = @import("gaming/performance.zig");
+pub const container_runtime = @import("container/runtime.zig");
+
 pub const NVZIG_MODULE_NAME = "nvzig";
 pub const NVZIG_VERSION_MAJOR = 1;
 pub const NVZIG_VERSION_MINOR = 0;
@@ -93,8 +106,8 @@ export fn nvzig_init_module() callconv(.C) c_int {
         // Continue without DRM support
     };
     
-    if (global_state.drm_driver) |*drm_driver| {
-        drm_driver.register() catch |err| {
+    if (global_state.drm_driver) |*driver| {
+        driver.register() catch |err| {
             print("nvzig: Warning - Failed to register DRM driver: {}\n", .{err});
         };
     }
@@ -110,8 +123,8 @@ export fn nvzig_exit_module() callconv(.C) void {
     if (!global_state.initialized) return;
     
     // Unregister DRM driver
-    if (global_state.drm_driver) |*drm_driver| {
-        drm_driver.unregister();
+    if (global_state.drm_driver) |*driver| {
+        driver.unregister();
     }
     
     // Clean up devices

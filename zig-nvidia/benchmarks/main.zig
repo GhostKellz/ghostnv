@@ -1,11 +1,12 @@
 const std = @import("std");
 const print = std.debug.print;
 const time = std.time;
-const command = @import("../src/hal/command.zig");
-const cuda = @import("../src/cuda/runtime.zig");
-const nvenc = @import("../src/nvenc/encoder.zig");
-const gaming = @import("../src/gaming/performance.zig");
-const memory = @import("../src/hal/memory.zig");
+const ghostnv = @import("ghostnv");
+const command = ghostnv.hal_command;
+const cuda = ghostnv.cuda_runtime;
+const nvenc = ghostnv.nvenc_encoder;
+const gaming = ghostnv.gaming_performance;
+const memory = ghostnv.hal_memory;
 
 const BenchmarkResult = struct {
     name: []const u8,
@@ -23,9 +24,9 @@ const BenchmarkResult = struct {
             if (self.memory_bandwidth_gbps > 0) {
                 print(" | {:.1} GB/s", .{self.memory_bandwidth_gbps});
             }
-            print("\n");
+            print("\n", .{});
         } else {
-            print("❌ FAILED\n");
+            print("❌ FAILED\n", .{});
         }
     }
 };
@@ -66,14 +67,14 @@ const BenchmarkSuite = struct {
         
         const total_ms = @as(f64, @floatFromInt(total_duration)) / time.ns_per_ms;
         
-        print("\n🎯 GHOSTNV BENCHMARK SUMMARY\n");
-        print("═══════════════════════════════\n");
+        print("\n🎯 GHOSTNV BENCHMARK SUMMARY\n", .{});
+        print("═══════════════════════════════\n", .{});
         print("Total benchmarks: {}\n", .{self.results.items.len});
         print("✅ Passed: {} | ❌ Failed: {}\n", .{ passed, failed });
         print("Total time: {:.2}ms\n", .{total_ms});
         
         if (failed == 0) {
-            print("🏆 ALL BENCHMARKS PASSED! GhostNV is READY! 🚀\n");
+            print("🏆 ALL BENCHMARKS PASSED! GhostNV is READY! 🚀\n", .{});
         }
     }
 };
@@ -237,7 +238,7 @@ fn benchmark_vrr_performance(allocator: std.mem.Allocator) !BenchmarkResult {
     defer memory_manager.deinit();
     
     // Use a mock DRM driver
-    var drm_driver = @import("../src/drm/driver.zig").DrmDriver.init(allocator) catch return BenchmarkResult{
+    var drm_driver = ghostnv.drm_driver.DrmDriver.init(allocator) catch return BenchmarkResult{
         .name = "VRR Performance",
         .duration_ns = 0,
         .ops_per_second = 0,
@@ -379,14 +380,14 @@ pub fn main() !void {
         }
     }
     
-    print("🚀 GHOSTNV PERFORMANCE BENCHMARK SUITE\n");
-    print("═════════════════════════════════════════\n");
+    print("🚀 GHOSTNV PERFORMANCE BENCHMARK SUITE\n", .{});
+    print("═════════════════════════════════════════\n", .{});
     if (quick_mode) {
-        print("Mode: QUICK (reduced iterations for CI)\n");
+        print("Mode: QUICK (reduced iterations for CI)\n", .{});
     } else {
-        print("Mode: FULL (comprehensive testing)\n");
+        print("Mode: FULL (comprehensive testing)\n", .{});
     }
-    print("Testing all major components for optimal performance...\n\n");
+    print("Testing all major components for optimal performance...\n\n", .{});
     
     var suite = BenchmarkSuite.init(allocator);
     defer suite.deinit();

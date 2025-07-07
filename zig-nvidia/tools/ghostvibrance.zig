@@ -1,7 +1,8 @@
 const std = @import("std");
 const print = std.debug.print;
-const vibrance = @import("../src/color/vibrance.zig");
-const drm = @import("../src/drm/driver.zig");
+const ghostnv = @import("ghostnv");
+const vibrance = ghostnv.color_vibrance;
+const drm = ghostnv.drm_driver;
 
 const CliError = error{
     InvalidArgument,

@@ -26,12 +26,12 @@ pub const KernelModule = struct {
         
         const nvidia_uvm_fd = std.posix.open("/dev/nvidia-uvm", .{ .ACCMODE = .RDWR }, 0) catch |err| {
             std.log.warn("Failed to open /dev/nvidia-uvm: {}", .{err});
-            -1
+            return -1;
         };
         
         // Query device count
         var device_count: u32 = 0;
-        const count_result = ioctl(nvidia_ctl_fd, NVIDIA_IOCTL_CARD_INFO, @ptrToInt(&device_count));
+        const count_result = ioctl(nvidia_ctl_fd, NVIDIA_IOCTL_CARD_INFO, @intFromPtr(&device_count));
         if (count_result < 0) {
             std.log.err("Failed to query device count");
             device_count = 1; // Assume single GPU
@@ -78,7 +78,7 @@ pub const KernelModule = struct {
         
         // Query GPU clocks via NVML-style ioctl
         var clock_info = NVMLClockInfo{};
-        const clock_result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_GET_CLOCKS, @ptrToInt(&clock_info));
+        const clock_result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_GET_CLOCKS, @intFromPtr(&clock_info));
         if (clock_result == 0) {
             status.gpu_clock_mhz = clock_info.graphics_clock;
             status.memory_clock_mhz = clock_info.memory_clock;
@@ -86,21 +86,21 @@ pub const KernelModule = struct {
         
         // Query temperature
         var temp_info = NVMLTempInfo{};
-        const temp_result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_GET_TEMPERATURE, @ptrToInt(&temp_info));
+        const temp_result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_GET_TEMPERATURE, @intFromPtr(&temp_info));
         if (temp_result == 0) {
             status.temperature_c = temp_info.gpu_temp;
         }
         
         // Query power usage
         var power_info = NVMLPowerInfo{};
-        const power_result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_GET_POWER, @ptrToInt(&power_info));
+        const power_result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_GET_POWER, @intFromPtr(&power_info));
         if (power_result == 0) {
             status.power_draw_watts = power_info.power_draw;
         }
         
         // Query utilization
         var util_info = NVMLUtilInfo{};
-        const util_result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_GET_UTILIZATION, @ptrToInt(&util_info));
+        const util_result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_GET_UTILIZATION, @intFromPtr(&util_info));
         if (util_result == 0) {
             status.gpu_utilization_percent = util_info.gpu_util;
             status.memory_utilization_percent = util_info.memory_util;
@@ -123,7 +123,7 @@ pub const KernelModule = struct {
             .value = vibrance,
         };
         
-        const result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_SET_ATTRIBUTE, @ptrToInt(&vibrance_cmd));
+        const result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_SET_ATTRIBUTE, @intFromPtr(&vibrance_cmd));
         if (result < 0) {
             const errno = std.posix.errno(-1);
             std.log.err("Failed to set digital vibrance: errno {}", .{errno});
@@ -145,7 +145,7 @@ pub const KernelModule = struct {
             .value = 0,
         };
         
-        const result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_GET_ATTRIBUTE, @ptrToInt(&vibrance_cmd));
+        const result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_GET_ATTRIBUTE, @intFromPtr(&vibrance_cmd));
         if (result < 0) {
             return error.KernelCallFailed;
         }
@@ -167,7 +167,7 @@ pub const KernelModule = struct {
             .flags = 0,
         };
         
-        const result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_SET_GSYNC, @ptrToInt(&gsync_cmd));
+        const result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_SET_GSYNC, @intFromPtr(&gsync_cmd));
         if (result < 0) {
             return error.KernelCallFailed;
         }
@@ -182,7 +182,7 @@ pub const KernelModule = struct {
         }
         
         var gsync_info = NVCTLGSyncInfo{};
-        const result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_GET_GSYNC, @ptrToInt(&gsync_info));
+        const result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_GET_GSYNC, @intFromPtr(&gsync_info));
         if (result < 0) {
             return error.KernelCallFailed;
         }
@@ -209,7 +209,7 @@ pub const KernelModule = struct {
             .refresh_rate = refresh_hz,
         };
         
-        const result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_SET_REFRESH_RATE, @ptrToInt(&refresh_cmd));
+        const result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_SET_REFRESH_RATE, @intFromPtr(&refresh_cmd));
         if (result < 0) {
             return error.KernelCallFailed;
         }
@@ -229,7 +229,7 @@ pub const KernelModule = struct {
             .gpu_va = 0,
         };
         
-        const result = ioctl(self.nvidia_uvm_fd, NVIDIA_UVM_IOCTL_ALLOC, @ptrToInt(&alloc_cmd));
+        const result = ioctl(self.nvidia_uvm_fd, NVIDIA_UVM_IOCTL_ALLOC, @intFromPtr(&alloc_cmd));
         if (result < 0) {
             return error.AllocationFailed;
         }
@@ -248,7 +248,7 @@ pub const KernelModule = struct {
             .size = handle.size,
         };
         
-        const result = ioctl(self.nvidia_uvm_fd, NVIDIA_UVM_IOCTL_FREE, @ptrToInt(&free_cmd));
+        const result = ioctl(self.nvidia_uvm_fd, NVIDIA_UVM_IOCTL_FREE, @intFromPtr(&free_cmd));
         if (result < 0) {
             return error.FreeFailed;
         }
@@ -263,11 +263,11 @@ pub const KernelModule = struct {
         var submit_cmd = NVCommandSubmit{
             .device_id = device_id,
             .num_commands = @intCast(commands.len),
-            .commands_ptr = @ptrToInt(commands.ptr),
+            .commands_ptr = @intFromPtr(commands.ptr),
             .fence_id = 0,
         };
         
-        const result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_SUBMIT_COMMANDS, @ptrToInt(&submit_cmd));
+        const result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_SUBMIT_COMMANDS, @intFromPtr(&submit_cmd));
         if (result < 0) {
             return error.SubmitFailed;
         }
@@ -282,7 +282,7 @@ pub const KernelModule = struct {
             .timeout_ns = @as(u64, timeout_ms) * 1000000,
         };
         
-        const result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_WAIT_COMMANDS, @ptrToInt(&wait_cmd));
+        const result = ioctl(self.nvidia_fd, NVIDIA_IOCTL_WAIT_COMMANDS, @intFromPtr(&wait_cmd));
         if (result < 0) {
             return error.WaitFailed;
         }

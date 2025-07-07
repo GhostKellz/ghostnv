@@ -47,6 +47,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         exe.root_module.addOptions("config", config);
+        exe.root_module.addImport("ghostnv", ghostnv.root_module);
         b.installArtifact(exe);
     }
 
@@ -70,6 +71,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         unit_tests.root_module.addOptions("config", config);
+        unit_tests.root_module.addImport("ghostnv", ghostnv.root_module);
         
         const run_unit_tests = b.addRunArtifact(unit_tests);
         test_step.dependOn(&run_unit_tests.step);
@@ -82,6 +84,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     integration_tests.root_module.addOptions("config", config);
+    integration_tests.root_module.addImport("ghostnv", ghostnv.root_module);
     
     const run_integration_tests = b.addRunArtifact(integration_tests);
     test_step.dependOn(&run_integration_tests.step);
@@ -95,6 +98,7 @@ pub fn build(b: *std.Build) void {
         .optimize = .ReleaseFast,
     });
     benchmark.root_module.addOptions("config", config);
+    benchmark.root_module.addImport("ghostnv", ghostnv.root_module);
     
     const run_benchmark = b.addRunArtifact(benchmark);
     bench_step.dependOn(&run_benchmark.step);
@@ -116,13 +120,15 @@ pub fn build(b: *std.Build) void {
     docs_step.dependOn(&docs_install.step);
 
     // Default run step
-    const run_cmd = b.addRunArtifact(b.addExecutable(.{
+    const exe = b.addExecutable(.{
         .name = "ghostnv-demo",
         .root_source_file = b.path("tools/gpu-test.zig"),
         .target = target,
         .optimize = optimize,
-    }));
-    run_cmd.root_module.addOptions("config", config);
+    });
+    exe.root_module.addOptions("config", config);
+    exe.root_module.addImport("ghostnv", ghostnv.root_module);
+    const run_cmd = b.addRunArtifact(exe);
 
     if (b.args) |args| {
         run_cmd.addArgs(args);

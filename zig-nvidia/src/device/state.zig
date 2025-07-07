@@ -170,7 +170,7 @@ pub const NvzigDevice = struct {
         // TODO: Save hardware state and power down
     }
     
-    pub fn resume(self: *NvzigDevice) !void {
+    pub fn resumeDevice(self: *NvzigDevice) !void {
         if (self.state != .Suspended) return;
         
         print("nvzig: Resuming device {}\n", .{self.index});

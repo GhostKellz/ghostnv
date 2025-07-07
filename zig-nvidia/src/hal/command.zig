@@ -359,7 +359,7 @@ pub const RingBuffer = struct {
         var new_gpu_pos = current_gpu_pos;
         if (current_gpu_pos != write_pos) {
             new_gpu_pos = (current_gpu_pos + 32) % self.size; // Simulate 32 bytes processed
-            if (new_gpu_pos > write_pos && current_gpu_pos < write_pos) {
+            if (new_gpu_pos > write_pos and current_gpu_pos < write_pos) {
                 new_gpu_pos = write_pos; // Don't go past write position
             }
         }

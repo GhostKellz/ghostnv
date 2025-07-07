@@ -1,6 +1,7 @@
 const std = @import("std");
 const print = std.debug.print;
-const hal = @import("../src/hal/pci.zig");
+const ghostnv = @import("ghostnv");
+const hal = ghostnv.hal_pci;
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);

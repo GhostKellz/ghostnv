@@ -18,7 +18,7 @@ pub fn main() !void {
         }
     }
 
-    print("=== Memory Bandwidth Benchmark ===\n");
+    print("=== Memory Bandwidth Benchmark ===\n", .{});
     print("Target architecture: {s}\n", .{target});
 
     // Architecture-specific configurations
@@ -37,33 +37,33 @@ pub fn main() !void {
     const theoretical_bandwidth = @as(f32, @floatFromInt(config.bus_width)) * @as(f32, @floatFromInt(config.memory_clock)) * 2.0 / 8.0 / 1000.0;
     print("Theoretical bandwidth: {d:.1} GB/s\n", .{theoretical_bandwidth});
 
-    print("\n--- Running Bandwidth Tests ---\n");
+    print("\n--- Running Bandwidth Tests ---\n", .{});
 
     // Sequential read test
-    print("Sequential read test...\n");
+    print("Sequential read test...\n", .{});
     std.time.sleep(500 * std.time.ns_per_ms);
     const seq_read = theoretical_bandwidth * 0.95;
     print("Sequential read: {d:.1} GB/s ({d:.1}%)\n", .{ seq_read, seq_read / theoretical_bandwidth * 100.0 });
 
     // Sequential write test
-    print("Sequential write test...\n");
+    print("Sequential write test...\n", .{});
     std.time.sleep(500 * std.time.ns_per_ms);
     const seq_write = theoretical_bandwidth * 0.90;
     print("Sequential write: {d:.1} GB/s ({d:.1}%)\n", .{ seq_write, seq_write / theoretical_bandwidth * 100.0 });
 
     // Random access test
-    print("Random access test...\n");
+    print("Random access test...\n", .{});
     std.time.sleep(500 * std.time.ns_per_ms);
     const random_access = theoretical_bandwidth * 0.75;
     print("Random access: {d:.1} GB/s ({d:.1}%)\n", .{ random_access, random_access / theoretical_bandwidth * 100.0 });
 
     // Copy bandwidth test
-    print("Copy bandwidth test...\n");
+    print("Copy bandwidth test...\n", .{});
     std.time.sleep(500 * std.time.ns_per_ms);
     const copy_bandwidth = theoretical_bandwidth * 0.85;
     print("Copy bandwidth: {d:.1} GB/s ({d:.1}%)\n", .{ copy_bandwidth, copy_bandwidth / theoretical_bandwidth * 100.0 });
 
-    print("\n--- Results Summary ---\n");
+    print("\n--- Results Summary ---\n", .{});
     print("Architecture: {s}\n", .{target});
     print("Peak bandwidth: {d:.1} GB/s\n", .{seq_read});
     print("Average bandwidth: {d:.1} GB/s\n", .{(seq_read + seq_write + random_access + copy_bandwidth) / 4.0});
