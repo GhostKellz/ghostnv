@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  nv-osmium:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu-runner
+    container_name: nv-osmium-runner
+    restart: unless-stopped
+    environment:
+      - GITHUB_REPO_URL=https://github.com/ghostkellz/ghostnv
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - RUNNER_NAME=nv-osmium
+      - RUNNER_LABELS=self-hosted,nv-osmium,rtx-2060,turing,linux
+      - NVIDIA_VISIBLE_DEVICES=0  # RTX 2060
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']  # RTX 2060 - adjust based on your GPU layout
+              capabilities: [gpu]
+    volumes:
+      - nv-osmium-work:/home/runner/actions-runner/_work
+    networks:
+      - ghostnv-ci
+
+  nv-prometheus:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu-runner
+    container_name: nv-prometheus-runner
+    restart: unless-stopped
+    environment:
+      - GITHUB_REPO_URL=https://github.com/ghostkellz/ghostnv
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - RUNNER_NAME=nv-prometheus
+      - RUNNER_LABELS=self-hosted,nv-prometheus,rtx-3070,ampere,linux
+      - NVIDIA_VISIBLE_DEVICES=1  # RTX 3070
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['1']  # RTX 3070 - adjust based on your GPU layout
+              capabilities: [gpu]
+    volumes:
+      - nv-prometheus-work:/home/runner/actions-runner/_work
+    networks:
+      - ghostnv-ci
+
+volumes:
+  nv-osmium-work:
+    driver: local
+  nv-prometheus-work:
+    driver: local
+
+networks:
+  ghostnv-ci:
+    driver: bridge

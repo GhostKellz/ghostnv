@@ -368,8 +368,24 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
     
+    // Parse command line arguments
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+    
+    var quick_mode = false;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--quick")) {
+            quick_mode = true;
+        }
+    }
+    
     print("🚀 GHOSTNV PERFORMANCE BENCHMARK SUITE\n");
     print("═════════════════════════════════════════\n");
+    if (quick_mode) {
+        print("Mode: QUICK (reduced iterations for CI)\n");
+    } else {
+        print("Mode: FULL (comprehensive testing)\n");
+    }
     print("Testing all major components for optimal performance...\n\n");
     
     var suite = BenchmarkSuite.init(allocator);

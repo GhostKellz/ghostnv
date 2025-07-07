@@ -1,148 +1,569 @@
 const std = @import("std");
-const print = std.debug.print;
+const linux = std.os.linux;
+const fs = std.fs;
+const Allocator = std.mem.Allocator;
+const pci = @import("pci.zig");
+
+// Memory Management for NVIDIA GPU VRAM and system memory
 
 pub const MemoryError = error{
-    AllocationFailed,
-    InvalidAddress,
-    MappingFailed,
     OutOfMemory,
+    InvalidAddress,
+    AccessDenied,
+    AllocationFailed,
+    MappingFailed,
+    FragmentationError,
+    InvalidSize,
+    DeviceNotFound,
+    HardwareError,
     PermissionDenied,
 };
 
-pub const MemoryType = enum {
-    System,     // System RAM
-    Device,     // Device memory (VRAM)
-    Coherent,   // DMA coherent memory
-    Streaming,  // DMA streaming memory
+pub const MemoryType = enum(u8) {
+    vram = 0,           // GPU video memory
+    system = 1,         // System RAM
+    gart = 2,           // Graphics Address Remapping Table
+    bar = 3,            // PCI Base Address Register space
+    coherent = 4,       // DMA coherent memory
+    streaming = 5,      // DMA streaming memory
+    
+    pub fn toString(self: MemoryType) []const u8 {
+        return switch (self) {
+            .vram => "VRAM",
+            .system => "System RAM",
+            .gart => "GART",
+            .bar => "BAR",
+            .coherent => "Coherent",
+            .streaming => "Streaming",
+        };
+    }
+};
+
+pub const MemoryUsage = enum(u8) {
+    framebuffer = 0,    // Display framebuffer
+    texture = 1,        // Texture data
+    vertex_buffer = 2,  // Vertex buffers
+    command_buffer = 3, // GPU command buffers
+    shader = 4,         // Shader programs
+    general = 5,        // General GPU memory
+    
+    pub fn toString(self: MemoryUsage) []const u8 {
+        return switch (self) {
+            .framebuffer => "Framebuffer",
+            .texture => "Texture",
+            .vertex_buffer => "Vertex Buffer",
+            .command_buffer => "Command Buffer",
+            .shader => "Shader",
+            .general => "General",
+        };
+    }
+};
+
+pub const MemoryFlags = struct {
+    readable: bool = true,
+    writable: bool = true,
+    executable: bool = false,
+    cacheable: bool = true,
+    coherent: bool = false,
+    
+    pub fn toProt(self: MemoryFlags) u32 {
+        var prot: u32 = 0;
+        if (self.readable) prot |= linux.PROT.READ;
+        if (self.writable) prot |= linux.PROT.WRITE;
+        if (self.executable) prot |= linux.PROT.EXEC;
+        return prot;
+    }
 };
 
 pub const MemoryRegion = struct {
-    physical_address: usize,
-    virtual_address: ?usize,
-    size: usize,
+    physical_address: u64,
+    virtual_address: ?u64,
+    size: u64,
     memory_type: MemoryType,
-    coherent: bool,
+    usage: MemoryUsage,
+    flags: MemoryFlags,
+    ref_count: u32,
+    mapped: bool,
     
-    pub fn init(phys_addr: usize, size: usize, mem_type: MemoryType) MemoryRegion {
+    pub fn init(
+        phys_addr: u64,
+        size: u64,
+        mem_type: MemoryType,
+        usage: MemoryUsage,
+        flags: MemoryFlags,
+    ) MemoryRegion {
         return MemoryRegion{
             .physical_address = phys_addr,
             .virtual_address = null,
             .size = size,
             .memory_type = mem_type,
-            .coherent = mem_type == .Coherent,
+            .usage = usage,
+            .flags = flags,
+            .ref_count = 1,
+            .mapped = false,
         };
     }
     
-    pub fn map_virtual(self: *MemoryRegion) !void {
-        // In real kernel module, this would use ioremap or similar
-        // For now, simulate mapping
-        self.virtual_address = self.physical_address;
-        print("nvzig: Mapped memory region 0x{X} -> 0x{X} (size: 0x{X})\n",
-              .{self.physical_address, self.virtual_address.?, self.size});
+    pub fn map(self: *MemoryRegion) !void {
+        if (self.mapped) return;
+        
+        // Map physical memory to virtual address space
+        // In real kernel implementation, this would use ioremap() for device memory
+        // or vmap() for system memory
+        
+        const virt_addr = switch (self.memory_type) {
+            .vram, .bar => try mapDeviceMemory(self.physical_address, self.size, self.flags),
+            .system => try mapSystemMemory(self.physical_address, self.size, self.flags),
+            .gart => try mapGartMemory(self.physical_address, self.size, self.flags),
+            .coherent, .streaming => try mapDmaMemory(self.physical_address, self.size, self.flags),
+        };
+        
+        self.virtual_address = virt_addr;
+        self.mapped = true;
+        
+        std.log.debug("Mapped {} memory: 0x{X} -> 0x{X} ({} bytes)", .{
+            self.memory_type.toString(),
+            self.physical_address,
+            virt_addr,
+            self.size,
+        });
     }
     
-    pub fn unmap_virtual(self: *MemoryRegion) void {
-        if (self.virtual_address) |_| {
-            // In real kernel module, this would use iounmap
-            print("nvzig: Unmapped memory region 0x{X}\n", .{self.physical_address});
-            self.virtual_address = null;
+    pub fn unmap(self: *MemoryRegion) void {
+        if (!self.mapped or self.virtual_address == null) return;
+        
+        switch (self.memory_type) {
+            .vram, .bar => unmapDeviceMemory(self.virtual_address.?, self.size),
+            .system => unmapSystemMemory(self.virtual_address.?, self.size),
+            .gart => unmapGartMemory(self.virtual_address.?, self.size),
+            .coherent, .streaming => unmapDmaMemory(self.virtual_address.?, self.size),
+        }
+        
+        std.log.debug("Unmapped {} memory: 0x{X} ({} bytes)", .{
+            self.memory_type.toString(),
+            self.virtual_address.?,
+            self.size,
+        });
+        
+        self.virtual_address = null;
+        self.mapped = false;
+    }
+    
+    pub fn addRef(self: *MemoryRegion) void {
+        self.ref_count += 1;
+    }
+    
+    pub fn release(self: *MemoryRegion) bool {
+        if (self.ref_count > 0) {
+            self.ref_count -= 1;
+        }
+        return self.ref_count == 0;
+    }
+    
+    pub fn sync_for_cpu(self: *MemoryRegion) void {
+        if (!self.flags.coherent and self.memory_type == .streaming) {
+            // In real kernel module, use dma_sync_single_for_cpu
+            std.log.debug("Syncing {} memory for CPU access", .{self.memory_type.toString()});
+        }
+    }
+    
+    pub fn sync_for_device(self: *MemoryRegion) void {
+        if (!self.flags.coherent and self.memory_type == .streaming) {
+            // In real kernel module, use dma_sync_single_for_device
+            std.log.debug("Syncing {} memory for device access", .{self.memory_type.toString()});
         }
     }
 };
 
 pub const DmaBuffer = struct {
     allocator: std.mem.Allocator,
-    size: usize,
-    physical_address: usize,
-    virtual_address: ?usize,
+    size: u64,
+    physical_address: u64,
+    virtual_address: ?u64,
     coherent: bool,
+    region: MemoryRegion,
     
-    pub fn init(allocator: std.mem.Allocator, size: usize, coherent: bool) !DmaBuffer {
+    pub fn init(allocator: Allocator, size: u64, coherent: bool) !DmaBuffer {
         // In real kernel module, use dma_alloc_coherent or dma_alloc_attrs
-        const buffer = DmaBuffer{
-            .allocator = allocator,
-            .size = size,
-            .physical_address = 0x1000000, // Simulate physical address
-            .virtual_address = null,
+        const phys_addr = 0x1000000; // Simulate physical address
+        
+        const mem_type: MemoryType = if (coherent) .coherent else .streaming;
+        const flags = MemoryFlags{
             .coherent = coherent,
         };
         
-        print("nvzig: Allocated DMA buffer: size=0x{X}, coherent={}\n", .{size, coherent});
+        var region = MemoryRegion.init(phys_addr, size, mem_type, .general, flags);
+        
+        const buffer = DmaBuffer{
+            .allocator = allocator,
+            .size = size,
+            .physical_address = phys_addr,
+            .virtual_address = null,
+            .coherent = coherent,
+            .region = region,
+        };
+        
+        std.log.debug("Allocated DMA buffer: size={}, coherent={}", .{ size, coherent });
         return buffer;
     }
     
     pub fn deinit(self: *DmaBuffer) void {
-        if (self.virtual_address) |_| {
-            self.unmap();
+        if (self.region.mapped) {
+            self.region.unmap();
         }
         
         // In real kernel module, use dma_free_coherent or dma_free_attrs
-        print("nvzig: Freed DMA buffer: size=0x{X}\n", .{self.size});
+        std.log.debug("Freed DMA buffer: size={}", .{self.size});
     }
     
     pub fn map(self: *DmaBuffer) !void {
-        if (self.virtual_address != null) return;
+        if (self.region.mapped) return;
         
-        // In real kernel module, this would map the DMA buffer
-        self.virtual_address = self.physical_address;
-        print("nvzig: Mapped DMA buffer 0x{X} -> 0x{X}\n",
-              .{self.physical_address, self.virtual_address.?});
+        try self.region.map();
+        self.virtual_address = self.region.virtual_address;
+        
+        std.log.debug("Mapped DMA buffer 0x{X} -> 0x{X}", .{
+            self.physical_address,
+            self.virtual_address.?,
+        });
     }
     
     pub fn unmap(self: *DmaBuffer) void {
-        if (self.virtual_address) |_| {
-            print("nvzig: Unmapped DMA buffer 0x{X}\n", .{self.physical_address});
+        if (self.region.mapped) {
+            self.region.unmap();
             self.virtual_address = null;
         }
     }
     
     pub fn sync_for_cpu(self: *DmaBuffer) void {
-        if (!self.coherent) {
-            // In real kernel module, use dma_sync_single_for_cpu
-            print("nvzig: Syncing DMA buffer for CPU access\n");
-        }
+        self.region.sync_for_cpu();
     }
     
     pub fn sync_for_device(self: *DmaBuffer) void {
-        if (!self.coherent) {
-            // In real kernel module, use dma_sync_single_for_device
-            print("nvzig: Syncing DMA buffer for device access\n");
-        }
+        self.region.sync_for_device();
     }
 };
 
-pub const MemoryManager = struct {
-    allocator: std.mem.Allocator,
-    regions: std.ArrayList(MemoryRegion),
-    dma_buffers: std.ArrayList(DmaBuffer),
-    total_allocated: usize,
+pub const MemoryPool = struct {
+    allocator: Allocator,
+    memory_type: MemoryType,
+    base_address: u64,
+    size: u64,
+    used: u64,
+    free_blocks: std.ArrayList(MemoryBlock),
+    allocated_regions: std.ArrayList(MemoryRegion),
     
-    pub fn init(allocator: std.mem.Allocator) MemoryManager {
+    const MemoryBlock = struct {
+        offset: u64,
+        size: u64,
+        
+        pub fn lessThan(_: void, lhs: MemoryBlock, rhs: MemoryBlock) bool {
+            return lhs.offset < rhs.offset;
+        }
+    };
+    
+    pub fn init(
+        allocator: Allocator,
+        memory_type: MemoryType,
+        base_address: u64,
+        size: u64,
+    ) MemoryPool {
+        var pool = MemoryPool{
+            .allocator = allocator,
+            .memory_type = memory_type,
+            .base_address = base_address,
+            .size = size,
+            .used = 0,
+            .free_blocks = std.ArrayList(MemoryBlock).init(allocator),
+            .allocated_regions = std.ArrayList(MemoryRegion).init(allocator),
+        };
+        
+        // Initial free block covers entire pool
+        pool.free_blocks.append(MemoryBlock{
+            .offset = 0,
+            .size = size,
+        }) catch unreachable;
+        
+        return pool;
+    }
+    
+    pub fn deinit(self: *MemoryPool) void {
+        // Unmap all allocated regions
+        for (self.allocated_regions.items) |*region| {
+            region.unmap();
+        }
+        
+        self.free_blocks.deinit();
+        self.allocated_regions.deinit();
+    }
+    
+    pub fn allocate(
+        self: *MemoryPool,
+        size: u64,
+        alignment: u64,
+        usage: MemoryUsage,
+        flags: MemoryFlags,
+    ) !*MemoryRegion {
+        const aligned_size = alignUp(size, alignment);
+        
+        // Find suitable free block
+        for (self.free_blocks.items, 0..) |*block, i| {
+            const aligned_offset = alignUp(block.offset, alignment);
+            const needed_size = aligned_offset - block.offset + aligned_size;
+            
+            if (block.size >= needed_size) {
+                // Allocate from this block
+                const phys_addr = self.base_address + aligned_offset;
+                
+                var region = MemoryRegion.init(phys_addr, aligned_size, self.memory_type, usage, flags);
+                try self.allocated_regions.append(region);
+                
+                // Update free block
+                if (block.size == needed_size) {
+                    // Exact fit - remove block
+                    _ = self.free_blocks.swapRemove(i);
+                } else {
+                    // Split block
+                    block.offset = aligned_offset + aligned_size;
+                    block.size -= needed_size;
+                }
+                
+                self.used += aligned_size;
+                
+                std.log.debug("Allocated {} memory: {} bytes at 0x{X} for {}", .{
+                    self.memory_type.toString(),
+                    aligned_size,
+                    phys_addr,
+                    usage.toString(),
+                });
+                
+                return &self.allocated_regions.items[self.allocated_regions.items.len - 1];
+            }
+        }
+        
+        return MemoryError.OutOfMemory;
+    }
+    
+    pub fn free(self: *MemoryPool, region: *MemoryRegion) !void {
+        // Find and remove from allocated regions
+        for (self.allocated_regions.items, 0..) |*allocated_region, i| {
+            if (allocated_region.physical_address == region.physical_address) {
+                // Unmap if mapped
+                allocated_region.unmap();
+                
+                // Add back to free blocks
+                const offset = allocated_region.physical_address - self.base_address;
+                const new_block = MemoryBlock{
+                    .offset = offset,
+                    .size = allocated_region.size,
+                };
+                
+                try self.free_blocks.append(new_block);
+                self.used -= allocated_region.size;
+                
+                // Remove from allocated list
+                _ = self.allocated_regions.swapRemove(i);
+                
+                // Coalesce adjacent free blocks
+                try self.coalesceBlocks();
+                
+                std.log.debug("Freed {} memory: {} bytes at 0x{X}", .{
+                    self.memory_type.toString(),
+                    allocated_region.size,
+                    allocated_region.physical_address,
+                });
+                
+                return;
+            }
+        }
+        
+        return MemoryError.InvalidAddress;
+    }
+    
+    fn coalesceBlocks(self: *MemoryPool) !void {
+        if (self.free_blocks.items.len <= 1) return;
+        
+        // Sort blocks by offset
+        std.sort.insertion(MemoryBlock, self.free_blocks.items, {}, MemoryBlock.lessThan);
+        
+        var i: usize = 0;
+        while (i < self.free_blocks.items.len - 1) {
+            const current = &self.free_blocks.items[i];
+            const next = &self.free_blocks.items[i + 1];
+            
+            if (current.offset + current.size == next.offset) {
+                // Adjacent blocks - coalesce
+                current.size += next.size;
+                _ = self.free_blocks.swapRemove(i + 1);
+            } else {
+                i += 1;
+            }
+        }
+    }
+    
+    pub fn getStats(self: *MemoryPool) MemoryStats {
+        return MemoryStats{
+            .total_size = self.size,
+            .used_size = self.used,
+            .free_size = self.size - self.used,
+            .fragmentation = self.calculateFragmentation(),
+            .num_allocations = @intCast(self.allocated_regions.items.len),
+            .num_free_blocks = @intCast(self.free_blocks.items.len),
+        };
+    }
+    
+    fn calculateFragmentation(self: *MemoryPool) f32 {
+        if (self.free_blocks.items.len <= 1) return 0.0;
+        
+        // Calculate fragmentation as ratio of free blocks to total free memory
+        const total_free = self.size - self.used;
+        if (total_free == 0) return 0.0;
+        
+        const avg_block_size = total_free / @as(u64, @intCast(self.free_blocks.items.len));
+        const largest_block = self.getLargestFreeBlock();
+        
+        return 1.0 - (@as(f32, @floatFromInt(avg_block_size)) / @as(f32, @floatFromInt(largest_block)));
+    }
+    
+    fn getLargestFreeBlock(self: *MemoryPool) u64 {
+        var largest: u64 = 0;
+        for (self.free_blocks.items) |block| {
+            if (block.size > largest) {
+                largest = block.size;
+            }
+        }
+        return largest;
+    }
+};
+
+pub const MemoryStats = struct {
+    total_size: u64,
+    used_size: u64,
+    free_size: u64,
+    fragmentation: f32,
+    num_allocations: u32,
+    num_free_blocks: u32,
+};
+
+pub const MemoryManager = struct {
+    allocator: Allocator,
+    vram_pool: ?MemoryPool,
+    system_pool: ?MemoryPool,
+    gart_pool: ?MemoryPool,
+    bar_pools: [6]?MemoryPool, // One for each BAR
+    dma_buffers: std.ArrayList(DmaBuffer),
+    pci_device: ?pci.PciDevice,
+    total_allocated: u64,
+    
+    pub fn init(allocator: Allocator) MemoryManager {
         return MemoryManager{
             .allocator = allocator,
-            .regions = std.ArrayList(MemoryRegion).init(allocator),
+            .vram_pool = null,
+            .system_pool = null,
+            .gart_pool = null,
+            .bar_pools = [_]?MemoryPool{null} ** 6,
             .dma_buffers = std.ArrayList(DmaBuffer).init(allocator),
+            .pci_device = null,
             .total_allocated = 0,
         };
     }
     
+    pub fn initWithDevice(allocator: Allocator, pci_dev: pci.PciDevice) !MemoryManager {
+        var manager = MemoryManager.init(allocator);
+        manager.pci_device = pci_dev;
+        
+        // Initialize VRAM pool
+        if (pci_dev.memory_size > 0) {
+            manager.vram_pool = MemoryPool.init(
+                allocator,
+                .vram,
+                @intCast(pci_dev.bar0), // VRAM typically mapped to BAR0
+                pci_dev.memory_size,
+            );
+            
+            std.log.info("Initialized VRAM pool: {} MB", .{pci_dev.memory_size / (1024 * 1024)});
+        }
+        
+        // Initialize BAR pools
+        const bars = [_]u64{ pci_dev.bar0, pci_dev.bar1, pci_dev.bar2, pci_dev.bar3, pci_dev.bar4, pci_dev.bar5 };
+        for (bars, 0..) |bar_addr, i| {
+            if (bar_addr != 0) {
+                const bar_size = try pci_dev.get_bar_size(allocator, @intCast(i));
+                if (bar_size > 0) {
+                    manager.bar_pools[i] = MemoryPool.init(
+                        allocator,
+                        .bar,
+                        bar_addr,
+                        bar_size,
+                    );
+                    
+                    std.log.debug("Initialized BAR{} pool: {} bytes at 0x{X}", .{ i, bar_size, bar_addr });
+                }
+            }
+        }
+        
+        // Initialize GART (Graphics Address Remapping Table) pool
+        // GART allows mapping system memory for GPU access
+        const gart_size = 256 * 1024 * 1024; // 256MB GART space
+        manager.gart_pool = MemoryPool.init(allocator, .gart, 0x0, gart_size);
+        
+        return manager;
+    }
+    
     pub fn deinit(self: *MemoryManager) void {
-        // Clean up all DMA buffers
+        // Clean up DMA buffers
         for (self.dma_buffers.items) |*buffer| {
             buffer.deinit();
         }
         self.dma_buffers.deinit();
         
-        // Clean up all memory regions
-        for (self.regions.items) |*region| {
-            region.unmap_virtual();
-        }
-        self.regions.deinit();
+        if (self.vram_pool) |*pool| pool.deinit();
+        if (self.system_pool) |*pool| pool.deinit();
+        if (self.gart_pool) |*pool| pool.deinit();
         
-        print("nvzig: Memory manager cleaned up (total allocated: 0x{X})\n", .{self.total_allocated});
+        for (self.bar_pools) |*maybe_pool| {
+            if (maybe_pool.*) |*pool| pool.deinit();
+        }
+        
+        if (self.pci_device) |*device| {
+            device.deinit(self.allocator);
+        }
+        
+        std.log.debug("Memory manager cleaned up (total allocated: {} bytes)", .{self.total_allocated});
     }
     
-    pub fn allocate_dma_buffer(self: *MemoryManager, size: usize, coherent: bool) !*DmaBuffer {
+    pub fn allocateVram(
+        self: *MemoryManager,
+        size: u64,
+        alignment: u64,
+        usage: MemoryUsage,
+        flags: MemoryFlags,
+    ) !*MemoryRegion {
+        if (self.vram_pool) |*pool| {
+            const region = try pool.allocate(size, alignment, usage, flags);
+            self.total_allocated += region.size;
+            return region;
+        }
+        return MemoryError.DeviceNotFound;
+    }
+    
+    pub fn allocateSystem(
+        self: *MemoryManager,
+        size: u64,
+        alignment: u64,
+        usage: MemoryUsage,
+        flags: MemoryFlags,
+    ) !*MemoryRegion {
+        // Allocate system memory and add to GART for GPU access
+        if (self.gart_pool) |*pool| {
+            const region = try pool.allocate(size, alignment, usage, flags);
+            self.total_allocated += region.size;
+            return region;
+        }
+        return MemoryError.DeviceNotFound;
+    }
+    
+    pub fn allocateDmaBuffer(self: *MemoryManager, size: u64, coherent: bool) !*DmaBuffer {
         var buffer = try DmaBuffer.init(self.allocator, size, coherent);
         try self.dma_buffers.append(buffer);
         self.total_allocated += size;
@@ -150,7 +571,7 @@ pub const MemoryManager = struct {
         return &self.dma_buffers.items[self.dma_buffers.items.len - 1];
     }
     
-    pub fn free_dma_buffer(self: *MemoryManager, buffer: *DmaBuffer) void {
+    pub fn freeDmaBuffer(self: *MemoryManager, buffer: *DmaBuffer) void {
         for (self.dma_buffers.items, 0..) |*item, i| {
             if (item == buffer) {
                 self.total_allocated -= buffer.size;
@@ -161,35 +582,115 @@ pub const MemoryManager = struct {
         }
     }
     
-    pub fn map_device_memory(self: *MemoryManager, phys_addr: usize, size: usize) !*MemoryRegion {
-        var region = MemoryRegion.init(phys_addr, size, .Device);
-        try region.map_virtual();
-        try self.regions.append(region);
-        
-        return &self.regions.items[self.regions.items.len - 1];
+    pub fn freeMemory(self: *MemoryManager, region: *MemoryRegion) !void {
+        switch (region.memory_type) {
+            .vram => {
+                if (self.vram_pool) |*pool| {
+                    self.total_allocated -= region.size;
+                    try pool.free(region);
+                } else {
+                    return MemoryError.InvalidAddress;
+                }
+            },
+            .system, .gart => {
+                if (self.gart_pool) |*pool| {
+                    self.total_allocated -= region.size;
+                    try pool.free(region);
+                } else {
+                    return MemoryError.InvalidAddress;
+                }
+            },
+            .bar => {
+                // Find which BAR pool this belongs to
+                for (self.bar_pools) |*maybe_pool| {
+                    if (maybe_pool.*) |*pool| {
+                        if (region.physical_address >= pool.base_address and
+                            region.physical_address < pool.base_address + pool.size) {
+                            self.total_allocated -= region.size;
+                            try pool.free(region);
+                            return;
+                        }
+                    }
+                }
+                return MemoryError.InvalidAddress;
+            },
+            .coherent, .streaming => {
+                // These are handled by DMA buffer management
+                return MemoryError.InvalidAddress;
+            },
+        }
     }
     
-    pub fn unmap_device_memory(self: *MemoryManager, region: *MemoryRegion) void {
-        for (self.regions.items, 0..) |*item, i| {
-            if (item == region) {
-                region.unmap_virtual();
-                _ = self.regions.swapRemove(i);
-                break;
-            }
+    pub fn getTotalStats(self: *MemoryManager) MemoryManagerStats {
+        var stats = MemoryManagerStats{
+            .vram_stats = null,
+            .system_stats = null,
+            .gart_stats = null,
+            .total_vram_mb = 0,
+            .total_system_mb = 0,
+            .total_allocated = self.total_allocated,
+        };
+        
+        if (self.vram_pool) |*pool| {
+            stats.vram_stats = pool.getStats();
+            stats.total_vram_mb = @intCast(pool.size / (1024 * 1024));
         }
+        
+        if (self.gart_pool) |*pool| {
+            stats.gart_stats = pool.getStats();
+            stats.total_system_mb = @intCast(pool.size / (1024 * 1024));
+        }
+        
+        return stats;
+    }
+    
+    pub fn printStats(self: *MemoryManager) void {
+        const stats = self.getTotalStats();
+        
+        std.log.info("=== GPU Memory Statistics ===");
+        
+        if (stats.vram_stats) |vram| {
+            std.log.info("VRAM: {}/{} MB used ({d:.1}% utilization, {d:.2}% fragmentation)", .{
+                vram.used_size / (1024 * 1024),
+                vram.total_size / (1024 * 1024),
+                @as(f32, @floatFromInt(vram.used_size)) / @as(f32, @floatFromInt(vram.total_size)) * 100.0,
+                vram.fragmentation * 100.0,
+            });
+            std.log.info("  {} allocations, {} free blocks", .{ vram.num_allocations, vram.num_free_blocks });
+        }
+        
+        if (stats.gart_stats) |gart| {
+            std.log.info("GART: {}/{} MB used ({d:.1}% utilization, {d:.2}% fragmentation)", .{
+                gart.used_size / (1024 * 1024),
+                gart.total_size / (1024 * 1024),
+                @as(f32, @floatFromInt(gart.used_size)) / @as(f32, @floatFromInt(gart.total_size)) * 100.0,
+                gart.fragmentation * 100.0,
+            });
+            std.log.info("  {} allocations, {} free blocks", .{ gart.num_allocations, gart.num_free_blocks });
+        }
+        
+        std.log.info("Total allocated: {} MB", .{stats.total_allocated / (1024 * 1024)});
     }
 };
 
+pub const MemoryManagerStats = struct {
+    vram_stats: ?MemoryStats,
+    system_stats: ?MemoryStats,
+    gart_stats: ?MemoryStats,
+    total_vram_mb: u32,
+    total_system_mb: u32,
+    total_allocated: u64,
+};
+
+// Legacy compatibility structures
 pub const DeviceMemoryManager = struct {
-    allocator: std.mem.Allocator,
     memory_manager: MemoryManager,
-    vram_base: usize,
-    vram_size: usize,
-    vram_used: usize,
+    vram_base: u64,
+    vram_size: u64,
+    vram_used: u64,
     
-    pub fn init(allocator: std.mem.Allocator) DeviceMemoryManager {
+    pub fn init(allocator: Allocator) DeviceMemoryManager {
         return DeviceMemoryManager{
-            .allocator = allocator,
             .memory_manager = MemoryManager.init(allocator),
             .vram_base = 0,
             .vram_size = 0,
@@ -201,18 +702,21 @@ pub const DeviceMemoryManager = struct {
         self.memory_manager.deinit();
     }
     
-    pub fn setup_vram(self: *DeviceMemoryManager, base: usize, size: usize) !void {
+    pub fn setup_vram(self: *DeviceMemoryManager, base: u64, size: u64) !void {
         self.vram_base = base;
         self.vram_size = size;
         self.vram_used = 0;
         
-        print("nvzig: VRAM setup - Base: 0x{X}, Size: 0x{X} ({} MB)\n",
-              .{base, size, size / (1024 * 1024)});
+        std.log.info("VRAM setup - Base: 0x{X}, Size: 0x{X} ({} MB)", .{
+            base,
+            size,
+            size / (1024 * 1024),
+        });
     }
     
-    pub fn allocate_vram(self: *DeviceMemoryManager, size: usize, alignment: usize) !usize {
+    pub fn allocate_vram(self: *DeviceMemoryManager, size: u64, alignment: u64) !u64 {
         // Simple bump allocator for VRAM
-        const aligned_used = std.mem.alignForward(usize, self.vram_used, alignment);
+        const aligned_used = std.mem.alignForward(u64, self.vram_used, alignment);
         
         if (aligned_used + size > self.vram_size) {
             return MemoryError.OutOfMemory;
@@ -221,30 +725,31 @@ pub const DeviceMemoryManager = struct {
         const offset = aligned_used;
         self.vram_used = aligned_used + size;
         
-        print("nvzig: Allocated VRAM: offset=0x{X}, size=0x{X}\n", .{offset, size});
+        std.log.debug("Allocated VRAM: offset=0x{X}, size=0x{X}", .{ offset, size });
         return self.vram_base + offset;
     }
     
-    pub fn free_vram(self: *DeviceMemoryManager, address: usize, size: usize) void {
-        _ = address; _ = size;
+    pub fn free_vram(self: *DeviceMemoryManager, address: u64, size: u64) void {
+        _ = address;
+        _ = size;
         // TODO: Implement proper VRAM free list
-        print("nvzig: VRAM free (not implemented yet)\n");
+        std.log.debug("VRAM free (not implemented yet)");
     }
     
-    pub fn get_vram_usage(self: *DeviceMemoryManager) struct { used: usize, total: usize } {
+    pub fn get_vram_usage(self: *DeviceMemoryManager) struct { used: u64, total: u64 } {
         return .{ .used = self.vram_used, .total = self.vram_size };
     }
 };
 
 // Page table management for GPU virtual memory
 pub const PageTable = struct {
-    allocator: std.mem.Allocator,
-    base_address: usize,
-    size: usize,
-    page_size: usize,
+    allocator: Allocator,
+    base_address: u64,
+    size: u64,
+    page_size: u64,
     
-    pub fn init(allocator: std.mem.Allocator, size: usize, page_size: usize) !PageTable {
-        const base = try allocator.alignedAlloc(u8, page_size, size);
+    pub fn init(allocator: Allocator, size: u64, page_size: u64) !PageTable {
+        const base = try allocator.alignedAlloc(u8, @intCast(page_size), @intCast(size));
         @memset(base, 0);
         
         return PageTable{
@@ -257,29 +762,144 @@ pub const PageTable = struct {
     
     pub fn deinit(self: *PageTable) void {
         const ptr: [*]u8 = @ptrFromInt(self.base_address);
-        self.allocator.free(ptr[0..self.size]);
+        self.allocator.free(ptr[0..@intCast(self.size)]);
     }
     
-    pub fn map_page(self: *PageTable, virtual_addr: usize, physical_addr: usize) !void {
+    pub fn map_page(self: *PageTable, virtual_addr: u64, physical_addr: u64) !void {
         const page_index = virtual_addr / self.page_size;
-        print("nvzig: Mapping page {}: 0x{X} -> 0x{X}\n", .{page_index, virtual_addr, physical_addr});
+        std.log.debug("Mapping page {}: 0x{X} -> 0x{X}", .{ page_index, virtual_addr, physical_addr });
         // TODO: Implement actual page table entry setting
     }
     
-    pub fn unmap_page(self: *PageTable, virtual_addr: usize) void {
+    pub fn unmap_page(self: *PageTable, virtual_addr: u64) void {
         const page_index = virtual_addr / self.page_size;
-        print("nvzig: Unmapping page {}: 0x{X}\n", .{page_index, virtual_addr});
+        std.log.debug("Unmapping page {}: 0x{X}", .{ page_index, virtual_addr });
         // TODO: Implement actual page table entry clearing
     }
 };
 
-test "memory manager" {
+// Helper functions for memory mapping
+fn mapDeviceMemory(phys_addr: u64, size: u64, flags: MemoryFlags) !u64 {
+    _ = size;
+    _ = flags;
+    
+    // In real kernel implementation:
+    // return ioremap(phys_addr, size);
+    
+    // Simulate mapping by returning a fake virtual address
+    return 0xFFFF000000000000 | phys_addr;
+}
+
+fn unmapDeviceMemory(virt_addr: u64, size: u64) void {
+    _ = virt_addr;
+    _ = size;
+    
+    // In real kernel implementation:
+    // iounmap(virt_addr);
+}
+
+fn mapSystemMemory(phys_addr: u64, size: u64, flags: MemoryFlags) !u64 {
+    _ = size;
+    _ = flags;
+    
+    // In real kernel implementation:
+    // return vmap(pfn_to_page(phys_addr >> PAGE_SHIFT), size >> PAGE_SHIFT, VM_MAP, PAGE_KERNEL);
+    
+    // Simulate mapping
+    return 0xFFFF800000000000 | phys_addr;
+}
+
+fn unmapSystemMemory(virt_addr: u64, size: u64) void {
+    _ = virt_addr;
+    _ = size;
+    
+    // In real kernel implementation:
+    // vunmap(virt_addr);
+}
+
+fn mapGartMemory(phys_addr: u64, size: u64, flags: MemoryFlags) !u64 {
+    _ = size;
+    _ = flags;
+    
+    // GART mapping involves programming the GPU's MMU
+    // Simulate GART mapping
+    return 0xC0000000 | phys_addr;
+}
+
+fn unmapGartMemory(virt_addr: u64, size: u64) void {
+    _ = virt_addr;
+    _ = size;
+    
+    // Unmap from GPU's MMU
+}
+
+fn mapDmaMemory(phys_addr: u64, size: u64, flags: MemoryFlags) !u64 {
+    _ = size;
+    _ = flags;
+    
+    // DMA memory mapping
+    return phys_addr; // Identity mapping for DMA
+}
+
+fn unmapDmaMemory(virt_addr: u64, size: u64) void {
+    _ = virt_addr;
+    _ = size;
+    
+    // DMA memory unmapping
+}
+
+fn alignUp(value: u64, alignment: u64) u64 {
+    return (value + alignment - 1) & ~(alignment - 1);
+}
+
+// Test functions
+test "memory pool allocation" {
     const allocator = std.testing.allocator;
-    var mem_mgr = MemoryManager.init(allocator);
-    defer mem_mgr.deinit();
+    
+    var pool = MemoryPool.init(allocator, .vram, 0x100000000, 1024 * 1024 * 1024); // 1GB
+    defer pool.deinit();
+    
+    // Test allocation
+    const region1 = try pool.allocate(4096, 4096, .framebuffer, MemoryFlags{});
+    try std.testing.expect(region1.size == 4096);
+    try std.testing.expect(region1.physical_address == 0x100000000);
+    
+    // Test second allocation
+    const region2 = try pool.allocate(8192, 4096, .texture, MemoryFlags{});
+    try std.testing.expect(region2.size == 8192);
+    try std.testing.expect(region2.physical_address == 0x100001000);
+    
+    // Test stats
+    const stats = pool.getStats();
+    try std.testing.expect(stats.used_size == 12288);
+    try std.testing.expect(stats.num_allocations == 2);
+    
+    // Test free
+    try pool.free(region1);
+    const stats2 = pool.getStats();
+    try std.testing.expect(stats2.used_size == 8192);
+    try std.testing.expect(stats2.num_allocations == 1);
+}
+
+test "memory manager initialization" {
+    const allocator = std.testing.allocator;
+    
+    var manager = MemoryManager.init(allocator);
+    defer manager.deinit();
+    
+    // Test basic initialization
+    try std.testing.expect(manager.vram_pool == null);
+    try std.testing.expect(manager.system_pool == null);
+}
+
+test "dma buffer management" {
+    const allocator = std.testing.allocator;
+    
+    var manager = MemoryManager.init(allocator);
+    defer manager.deinit();
     
     // Test DMA buffer allocation
-    const buffer = try mem_mgr.allocate_dma_buffer(4096, true);
+    const buffer = try manager.allocateDmaBuffer(4096, true);
     try std.testing.expect(buffer.size == 4096);
     try std.testing.expect(buffer.coherent == true);
     
@@ -287,11 +907,12 @@ test "memory manager" {
     try buffer.map();
     try std.testing.expect(buffer.virtual_address != null);
     
-    // Cleanup is handled by mem_mgr.deinit()
+    // Cleanup is handled by manager.deinit()
 }
 
 test "device memory manager" {
     const allocator = std.testing.allocator;
+    
     var dev_mem = DeviceMemoryManager.init(allocator);
     defer dev_mem.deinit();
     

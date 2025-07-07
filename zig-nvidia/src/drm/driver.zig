@@ -1,5 +1,9 @@
 const std = @import("std");
+const linux = std.os.linux;
+const fs = std.fs;
+const Allocator = std.mem.Allocator;
 const print = std.debug.print;
+const pci = @import("../hal/pci.zig");
 
 // Import gaming performance module for VRR types
 const VrrMode = enum(u8) {
@@ -29,6 +33,11 @@ pub const DrmError = error{
     VrrNotSupported,
     InvalidRefreshRate,
     DisplayNotConnected,
+    DeviceNotFound,
+    AccessDenied,
+    OutOfMemory,
+    InvalidDevice,
+    HardwareError,
 };
 
 pub const DrmConnectorType = enum {
@@ -285,6 +294,34 @@ pub const DrmFramebuffer = struct {
     }
 };
 
+pub const DrmDevice = struct {
+    dev_node: []const u8,     // e.g., "/dev/dri/card0"
+    sysfs_path: []const u8,   // e.g., "/sys/class/drm/card0"
+    major: u32,
+    minor: u32,
+    
+    pub fn init(allocator: Allocator, card_index: u32) !DrmDevice {
+        const dev_node = try std.fmt.allocPrint(allocator, "/dev/dri/card{}", .{card_index});
+        const sysfs_path = try std.fmt.allocPrint(allocator, "/sys/class/drm/card{}", .{card_index});
+        
+        return DrmDevice{
+            .dev_node = dev_node,
+            .sysfs_path = sysfs_path,
+            .major = 226, // DRM major device number
+            .minor = card_index,
+        };
+    }
+    
+    pub fn deinit(self: *DrmDevice, allocator: Allocator) void {
+        allocator.free(self.dev_node);
+        allocator.free(self.sysfs_path);
+    }
+    
+    pub fn exists(self: *DrmDevice) bool {
+        return fs.accessAbsolute(self.dev_node, .{}) catch false;
+    }
+};
+
 pub const DrmDriver = struct {
     allocator: std.mem.Allocator,
     name: []const u8,
@@ -296,10 +333,19 @@ pub const DrmDriver = struct {
     next_id: u32,
     registered: bool,
     
+    // Hardware integration
+    pci_device: ?pci.PciDevice,
+    drm_device: ?DrmDevice,
+    
+    // Memory management
+    vram_size: u64,
+    vram_used: u64,
+    system_memory_used: u64,
+    
     pub fn init(allocator: std.mem.Allocator) !DrmDriver {
         return DrmDriver{
             .allocator = allocator,
-            .name = "nvzig",
+            .name = "ghostnv",
             .major_version = 1,
             .minor_version = 0,
             .connectors = std.ArrayList(DrmConnector).init(allocator),
@@ -307,10 +353,30 @@ pub const DrmDriver = struct {
             .framebuffers = std.ArrayList(DrmFramebuffer).init(allocator),
             .next_id = 1,
             .registered = false,
+            .pci_device = null,
+            .drm_device = null,
+            .vram_size = 0,
+            .vram_used = 0,
+            .system_memory_used = 0,
         };
     }
     
+    pub fn initWithPciDevice(allocator: std.mem.Allocator, pci_dev: pci.PciDevice) !DrmDriver {
+        var driver = try DrmDriver.init(allocator);
+        driver.pci_device = pci_dev;
+        driver.vram_size = pci_dev.memory_size;
+        return driver;
+    }
+    
     pub fn deinit(self: *DrmDriver) void {
+        if (self.drm_device) |*device| {
+            device.deinit(self.allocator);
+        }
+        
+        if (self.pci_device) |*device| {
+            device.deinit(self.allocator);
+        }
+        
         for (self.connectors.items) |*connector| {
             connector.deinit();
         }
@@ -322,19 +388,109 @@ pub const DrmDriver = struct {
     pub fn register(self: *DrmDriver) !void {
         if (self.registered) return;
         
-        print("nvzig: Registering DRM driver '{}' v{}.{}\n", 
+        print("GhostNV: Registering DRM driver '{}' v{}.{}\n", 
               .{self.name, self.major_version, self.minor_version});
+        
+        // Find available DRM card slot
+        const card_index = try self.findAvailableDrmCard();
+        self.drm_device = try DrmDevice.init(self.allocator, card_index);
+        
+        // Initialize PCI device if not already done
+        if (self.pci_device == null) {
+            try self.detectPciDevice();
+        }
         
         // Initialize hardware resources
         try self.init_hardware();
+        
+        // Create DRM device node
+        try self.createDrmDeviceNode();
         
         // Create connectors and CRTCs
         try self.create_connectors();
         try self.create_crtcs();
         
-        // In real implementation, would call drm_dev_register
+        // Register with DRM subsystem
+        try self.registerWithDrmSubsystem();
+        
         self.registered = true;
-        print("nvzig: DRM driver registration complete\n");
+        print("GhostNV: DRM driver registration complete on {s}\n", .{self.drm_device.?.dev_node});
+    }
+    
+    fn findAvailableDrmCard(self: *DrmDriver) !u32 {
+        // Find the first available DRM card slot
+        for (0..16) |i| {
+            const card_index = @as(u32, @intCast(i));
+            var test_device = try DrmDevice.init(self.allocator, card_index);
+            defer test_device.deinit(self.allocator);
+            
+            if (!test_device.exists()) {
+                return card_index;
+            }
+        }
+        return DrmError.ResourceBusy;
+    }
+    
+    fn detectPciDevice(self: *DrmDriver) !void {
+        var enumerator = pci.PciEnumerator.init(self.allocator);
+        defer enumerator.deinit();
+        
+        try enumerator.scanPciDevices();
+        
+        if (try enumerator.findPrimaryGpu()) |primary_gpu| {
+            self.pci_device = primary_gpu;
+            self.vram_size = primary_gpu.memory_size;
+            
+            const name = try primary_gpu.getDeviceName(self.allocator);
+            defer self.allocator.free(name);
+            
+            print("GhostNV: Detected primary GPU: {s} ({s})\n", .{
+                name,
+                primary_gpu.architecture.toString(),
+            });
+        } else {
+            return DrmError.DeviceNotFound;
+        }
+    }
+    
+    fn createDrmDeviceNode(self: *DrmDriver) !void {
+        if (self.drm_device == null) return DrmError.InitializationFailed;
+        
+        const device = &self.drm_device.?;
+        
+        // In real kernel implementation, this would:
+        // 1. Call device_create() to create sysfs entry
+        // 2. Register character device with DRM major number
+        // 3. Create /dev/dri/cardN device node
+        
+        print("GhostNV: Creating DRM device node {s}\n", .{device.dev_node});
+        
+        // Simulate device node creation
+        // In real implementation: mknod(device.dev_node, S_IFCHR | 0666, makedev(device.major, device.minor))
+    }
+    
+    fn registerWithDrmSubsystem(self: *DrmDriver) !void {
+        // In real kernel implementation, this would:
+        // 1. Call drm_dev_alloc() to allocate DRM device
+        // 2. Set up driver callbacks (open, close, ioctl, etc.)
+        // 3. Call drm_dev_register() to register with DRM core
+        // 4. Register framebuffer if console support needed
+        
+        print("GhostNV: Registering with DRM subsystem\n");
+        
+        // Set up driver capabilities
+        const capabilities = [_][]const u8{
+            "DRM_PRIME",
+            "DRM_RENDER",
+            "DRM_MODESET",
+            "DRM_ATOMIC",
+            "DRM_GEM",
+            "DRM_SYNCOBJ",
+        };
+        
+        for (capabilities) |cap| {
+            print("GhostNV: Capability: {s}\n", .{cap});
+        }
     }
     
     pub fn unregister(self: *DrmDriver) void {

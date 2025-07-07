@@ -3,6 +3,7 @@ const linux = std.os.linux;
 const Allocator = std.mem.Allocator;
 const drm = @import("../drm/driver.zig");
 const gsync = @import("../gsync/display.zig");
+const nvkms = @import("../nvkms/interface.zig");
 
 pub const VibranceError = error{
     InvalidRange,
@@ -258,11 +259,30 @@ pub const ColorMatrix3x3 = struct {
     }
 };
 
+pub const VibranceBackend = enum {
+    software,    // Software-based processing (fallback)
+    nvidia_hw,   // Direct NVIDIA hardware via NVKMS
+    drm_ctm,     // DRM Color Transformation Matrix
+    
+    pub fn toString(self: VibranceBackend) []const u8 {
+        return switch (self) {
+            .software => "Software",
+            .nvidia_hw => "NVIDIA Hardware",
+            .drm_ctm => "DRM CTM",
+        };
+    }
+};
+
 pub const VibranceEngine = struct {
     allocator: Allocator,
     profiles: std.StringHashMap(VibranceProfile),
     active_profile: ?[]const u8,
     drm_driver: *drm.DrmDriver,
+    
+    // Hardware backends
+    backend: VibranceBackend,
+    nvkms_interface: ?nvkms.NvKmsInterface,
+    primary_display: ?nvkms.NvKmsDisplayHandle,
     
     // Hardware state
     lut_red: [256]u16,     // 16-bit Look-Up Tables for hardware acceleration
@@ -285,6 +305,9 @@ pub const VibranceEngine = struct {
             .profiles = std.StringHashMap(VibranceProfile).init(allocator),
             .active_profile = null,
             .drm_driver = drm_driver,
+            .backend = .software,
+            .nvkms_interface = null,
+            .primary_display = null,
             .lut_red = std.mem.zeroes([256]u16),
             .lut_green = std.mem.zeroes([256]u16),
             .lut_blue = std.mem.zeroes([256]u16),
@@ -297,7 +320,33 @@ pub const VibranceEngine = struct {
         };
     }
     
+    pub fn initWithHardware(allocator: Allocator, drm_driver: *drm.DrmDriver) !VibranceEngine {
+        var engine = VibranceEngine.init(allocator, drm_driver);
+        
+        // Try to initialize NVIDIA hardware acceleration
+        if (nvkms.NvKmsInterface.init(allocator)) |interface| {
+            engine.nvkms_interface = interface;
+            engine.backend = .nvidia_hw;
+            
+            // Detect primary display
+            if (interface.detectPrimaryDisplay()) |display| {
+                engine.primary_display = display;
+                std.log.info("NVIDIA hardware acceleration enabled on display {}", .{display.display_id});
+            } else |err| {
+                std.log.warn("Failed to detect primary display: {}", .{err});
+            }
+        } else |err| {
+            std.log.warn("NVIDIA hardware acceleration not available: {}, falling back to software", .{err});
+            engine.backend = .software;
+        }
+        
+        return engine;
+    }
+    
     pub fn deinit(self: *VibranceEngine) void {
+        if (self.nvkms_interface) |*interface| {
+            interface.deinit();
+        }
         self.profiles.deinit();
     }
     
@@ -474,10 +523,42 @@ pub const VibranceEngine = struct {
     }
     
     fn apply_to_hardware(self: *VibranceEngine) !void {
-        // Apply LUTs to display hardware via DRM
-        // In a real implementation, this would program the display controller's LUT registers
+        switch (self.backend) {
+            .nvidia_hw => try self.apply_nvidia_hardware(),
+            .drm_ctm => try self.apply_drm_ctm(),
+            .software => try self.apply_software_processing(),
+        }
+    }
+    
+    fn apply_nvidia_hardware(self: *VibranceEngine) !void {
+        if (self.nvkms_interface == null or self.primary_display == null) {
+            return VibranceError.NotInitialized;
+        }
         
-        std.log.debug("Programming hardware LUTs for digital vibrance");
+        var interface = &self.nvkms_interface.?;
+        const display = self.primary_display.?;
+        
+        // Apply hardware LUTs for advanced color processing
+        try interface.setHardwareLut(
+            display,
+            .gamma,
+            self.lut_red[0..],
+            self.lut_green[0..],
+            self.lut_blue[0..],
+        );
+        
+        std.log.debug("Applied NVIDIA hardware LUTs for digital vibrance");
+    }
+    
+    fn apply_drm_ctm(self: *VibranceEngine) !void {
+        // Apply color transformation matrix via DRM
+        // This would use the DRM Color Transformation Matrix property
+        std.log.debug("Applied DRM CTM for digital vibrance");
+    }
+    
+    fn apply_software_processing(self: *VibranceEngine) !void {
+        // Software-based processing - original implementation
+        std.log.debug("Applied software processing for digital vibrance");
         
         // Simulate hardware programming delay
         std.time.sleep(1000000); // 1ms
@@ -565,13 +646,76 @@ pub const VibranceEngine = struct {
                 const new_vibrance = std.math.clamp(profile.vibrance + vibrance_delta, -50, 100);
                 profile.vibrance = @intCast(new_vibrance);
                 
-                // Quick update without full profile reapplication
-                self.vibrance_matrix = ColorMatrix3x3.vibrance_matrix(@as(f32, @floatFromInt(profile.vibrance)));
-                try self.apply_to_hardware();
+                // Use direct hardware adjustment for NVIDIA
+                if (self.backend == .nvidia_hw) {
+                    try self.apply_vibrance_direct(@intCast(new_vibrance));
+                } else {
+                    // Quick update without full profile reapplication
+                    self.vibrance_matrix = ColorMatrix3x3.vibrance_matrix(@as(f32, @floatFromInt(profile.vibrance)));
+                    try self.apply_to_hardware();
+                }
                 
                 std.log.debug("Real-time vibrance adjustment: {} -> {}", .{ profile.vibrance - vibrance_delta, profile.vibrance });
             }
         }
+    }
+    
+    pub fn apply_vibrance_direct(self: *VibranceEngine, vibrance: i16) !void {
+        if (self.backend == .nvidia_hw) {
+            if (self.nvkms_interface == null or self.primary_display == null) {
+                return VibranceError.NotInitialized;
+            }
+            
+            var interface = &self.nvkms_interface.?;
+            const display = self.primary_display.?;
+            
+            // Apply vibrance directly to hardware like nvibrant
+            try interface.setDigitalVibrance(display, vibrance);
+            
+            std.log.info("Applied direct hardware vibrance: {}", .{vibrance});
+        } else {
+            // Fall back to software processing
+            if (self.active_profile) |profile_name| {
+                if (self.profiles.getPtr(profile_name)) |profile| {
+                    profile.vibrance = @intCast(std.math.clamp(vibrance, -50, 100));
+                    try self.apply_profile(profile_name);
+                }
+            }
+        }
+    }
+    
+    pub fn get_vibrance_info(self: *VibranceEngine) !struct { 
+        current: i16, 
+        min: i16, 
+        max: i16, 
+        backend: VibranceBackend 
+    } {
+        var current: i16 = 0;
+        var min: i16 = -50;
+        var max: i16 = 100;
+        
+        if (self.backend == .nvidia_hw) {
+            if (self.nvkms_interface != null and self.primary_display != null) {
+                var interface = &self.nvkms_interface.?;
+                const display = self.primary_display.?;
+                
+                const info = try interface.getDigitalVibrance(display);
+                current = info.current;
+                min = info.min;
+                max = info.max;
+            }
+        } else if (self.active_profile) |profile_name| {
+            if (self.profiles.get(profile_name)) |profile| {
+                current = profile.vibrance;
+            }
+        }
+        
+        return .{
+            .current = current,
+            .min = min,
+            .max = max,
+            .backend = self.backend,
+        };
     }
 };
 

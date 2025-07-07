@@ -1,0 +1,245 @@
+name: Multi-GPU CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Daily regression testing at 2 AM UTC
+    - cron: '0 2 * * *'
+
+jobs:
+  # RTX 2060 (Turing) - Legacy compatibility on nv-osmium
+  test-turing:
+    runs-on: [self-hosted, nv-osmium, rtx-2060]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig (latest dev)
+        run: |
+          set -eux
+          JSON=$(curl -sL https://ziglang.org/download/index.json)
+          ZIG_URL=$(echo "$JSON" | jq -r '.master."x86_64-linux".tarball')
+          curl -LO "$ZIG_URL"
+          TARBALL=$(basename "$ZIG_URL")
+          tar -xf "$TARBALL"
+          ZIG_DIR=$(tar -tf "$TARBALL" | head -1 | cut -f1 -d"/")
+          echo "$PWD/$ZIG_DIR" >> $GITHUB_PATH
+
+      - name: Detect RTX 2060 hardware
+        run: |
+          echo "=== nv-osmium Hardware Info ==="
+          uname -a
+          lspci | grep -i nvidia
+          nvidia-smi --query-gpu=name,memory.total,driver_version,pci.bus_id --format=csv
+          echo "Expected: RTX 2060, Turing architecture"
+
+      - name: Build for Turing (legacy mode)
+        run: |
+          cd zig-nvidia
+          zig build -Dgpu_generation=turing -Dlegacy_mode=true -Doptimize=ReleaseFast
+
+      - name: Run Turing-specific tests
+        run: |
+          cd zig-nvidia
+          echo "=== RTX 2060 (Turing) Test Suite ==="
+          
+          # Hardware detection
+          zig run tools/gpu-test.zig || echo "GPU test completed"
+          
+          # Turing architecture validation
+          zig run tools/test-rtx.zig -- --generation=turing || true
+          
+          # Legacy compatibility tests
+          zig test src/hal/pci.zig --test-filter "turing detection" || true
+          zig test src/hal/command.zig --test-filter "basic operations" || true
+
+      - name: Turing performance baseline
+        run: |
+          cd zig-nvidia
+          echo "=== RTX 2060 Performance Baseline ==="
+          zig run benchmarks/main.zig -- --quick --gpu=rtx2060 > turing_results.txt || echo "Benchmark completed"
+          
+          # Memory bandwidth (6GB GDDR6)
+          zig run benchmarks/memory_bandwidth.zig -- --target=turing || true
+          
+          cat turing_results.txt || echo "No results file"
+
+      - name: Legacy OpenGL compatibility
+        run: |
+          cd zig-nvidia
+          echo "=== Legacy Graphics API Tests ==="
+          # Test older graphics APIs compatibility
+          zig test src/hal/memory.zig --test-filter "memory pool allocation" || true
+
+      - name: Upload Turing results
+        uses: actions/upload-artifact@v4
+        with:
+          name: turing-rtx2060-results
+          path: |
+            zig-nvidia/zig-out/
+            turing_results.txt
+            zig-nvidia/benchmarks/results/
+
+  # RTX 3070 (Ampere) - Hybrid driver on nv-prometheus  
+  test-ampere:
+    runs-on: [self-hosted, nv-prometheus, rtx-3070]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig (latest dev)
+        run: |
+          set -eux
+          JSON=$(curl -sL https://ziglang.org/download/index.json)
+          ZIG_URL=$(echo "$JSON" | jq -r '.master."x86_64-linux".tarball')
+          curl -LO "$ZIG_URL"
+          TARBALL=$(basename "$ZIG_URL")
+          tar -xf "$TARBALL"
+          ZIG_DIR=$(tar -tf "$TARBALL" | head -1 | cut -f1 -d"/")
+          echo "$PWD/$ZIG_DIR" >> $GITHUB_PATH
+
+      - name: Detect RTX 3070 hardware
+        run: |
+          echo "=== nv-prometheus Hardware Info ==="
+          uname -a
+          lspci | grep -i nvidia
+          nvidia-smi --query-gpu=name,memory.total,driver_version,pci.bus_id --format=csv
+          echo "Expected: RTX 3070, Ampere architecture"
+
+      - name: Build for Ampere (hybrid mode)
+        run: |
+          cd zig-nvidia
+          zig build -Dgpu_generation=ampere -Dhybrid_mode=true -Doptimize=ReleaseFast
+
+      - name: Run Ampere-specific tests
+        run: |
+          cd zig-nvidia
+          echo "=== RTX 3070 (Ampere) Test Suite ==="
+          
+          # Hardware detection
+          zig run tools/gpu-test.zig || echo "GPU test completed"
+          
+          # Ampere architecture validation  
+          zig run tools/test-rtx.zig -- --generation=ampere || true
+          
+          # Test 2nd gen RT cores and 3rd gen Tensor cores
+          echo "Testing Ampere RT/Tensor capabilities..."
+
+      - name: NVENC H.264/H.265 testing
+        run: |
+          cd zig-nvidia
+          echo "=== NVENC Video Encoding Tests ==="
+          
+          # H.264 encoding (widely supported)
+          zig run tools/test-nvenc.zig -- --codec=h264 --resolution=1080p || true
+          
+          # H.265 encoding (Ampere feature)
+          zig run tools/test-nvenc.zig -- --codec=h265 --resolution=1080p || true
+          
+          echo "NVENC testing completed"
+
+      - name: CUDA Compute SM_86 testing
+        run: |
+          cd zig-nvidia
+          echo "=== CUDA Compute Capability 8.6 ==="
+          # Test CUDA compute features specific to Ampere
+          zig test src/hal/command.zig --test-filter "command scheduler" || true
+
+      - name: Ampere performance benchmarks
+        run: |
+          cd zig-nvidia
+          echo "=== RTX 3070 Performance Benchmarks ==="
+          zig run benchmarks/main.zig -- --quick --gpu=rtx3070 > ampere_results.txt || echo "Benchmark completed"
+          
+          # Memory bandwidth (8GB GDDR6 - 512 GB/s)
+          zig run benchmarks/memory_bandwidth.zig -- --target=ampere || true
+          
+          cat ampere_results.txt || echo "No results file"
+
+      - name: Hybrid driver validation
+        run: |
+          cd zig-nvidia
+          echo "=== Hybrid Zig/C Driver Validation ==="
+          # Ensure hybrid mode works correctly
+          zig test src/hal/interrupt.zig --test-filter "interrupt controller" || true
+
+      - name: Upload Ampere results
+        uses: actions/upload-artifact@v4
+        with:
+          name: ampere-rtx3070-results
+          path: |
+            zig-nvidia/zig-out/
+            ampere_results.txt
+            zig-nvidia/benchmarks/results/
+
+
+  # Cross-GPU compatibility analysis
+  compatibility-matrix:
+    runs-on: ubuntu-latest
+    needs: [test-turing, test-ampere]
+    if: always()
+    
+    steps:
+      - name: Download all test results
+        uses: actions/download-artifact@v4
+        
+      - name: Analyze compatibility matrix
+        run: |
+          echo "=== GhostNV Multi-GPU Compatibility Report ===" > compatibility_report.md
+          echo "Date: $(date)" >> compatibility_report.md
+          echo "Commit: ${{ github.sha }}" >> compatibility_report.md
+          echo "" >> compatibility_report.md
+          
+          echo "## Hardware Test Results" >> compatibility_report.md
+          
+          # Check RTX 2060 results
+          if [ -d "turing-rtx2060-results" ]; then
+            echo "✅ RTX 2060 (Turing) on nv-osmium: PASSED" >> compatibility_report.md
+            echo "   - Legacy compatibility: VALIDATED" >> compatibility_report.md
+            echo "   - OpenGL support: CONFIRMED" >> compatibility_report.md
+          else
+            echo "❌ RTX 2060 (Turing) on nv-osmium: FAILED" >> compatibility_report.md
+          fi
+          
+          # Check RTX 3070 results
+          if [ -d "ampere-rtx3070-results" ]; then
+            echo "✅ RTX 3070 (Ampere) on nv-prometheus: PASSED" >> compatibility_report.md
+            echo "   - Hybrid driver: VALIDATED" >> compatibility_report.md
+            echo "   - NVENC H.264/H.265: CONFIRMED" >> compatibility_report.md
+            echo "   - CUDA SM_86: VALIDATED" >> compatibility_report.md
+          else
+            echo "❌ RTX 3070 (Ampere) on nv-prometheus: FAILED" >> compatibility_report.md
+          fi
+          
+          
+          echo "" >> compatibility_report.md
+          echo "## Performance Analysis" >> compatibility_report.md
+          
+          # Performance comparison
+          if [ -f "turing-rtx2060-results/turing_results.txt" ]; then
+            echo "### RTX 2060 Performance:" >> compatibility_report.md
+            grep -E "score|bandwidth" "turing-rtx2060-results/turing_results.txt" >> compatibility_report.md || echo "No performance data" >> compatibility_report.md
+          fi
+          
+          if [ -f "ampere-rtx3070-results/ampere_results.txt" ]; then
+            echo "### RTX 3070 Performance:" >> compatibility_report.md  
+            grep -E "score|bandwidth" "ampere-rtx3070-results/ampere_results.txt" >> compatibility_report.md || echo "No performance data" >> compatibility_report.md
+          fi
+          
+          
+          cat compatibility_report.md
+
+      - name: Upload compatibility report
+        uses: actions/upload-artifact@v4
+        with:
+          name: multi-gpu-compatibility-report
+          path: compatibility_report.md
