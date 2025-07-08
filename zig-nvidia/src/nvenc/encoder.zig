@@ -396,27 +396,62 @@ pub const NvencSession = struct {
         output_buffer.locked = true;
         input_buffer.timestamp = std.time.nanoTimestamp();
         
-        // Submit encode command to GPU
-        _ = try self.command_builder.video_encode(
+        // Advanced encode command with optimizations
+        const encode_cmd = try self.command_builder.createAdvancedVideoEncodeCommand(
             input_buffer.gpu_address,
             output_buffer.gpu_address,
             self.config.width,
             self.config.height,
-            @intFromEnum(self.config.codec)
+            @intFromEnum(self.config.codec),
+            .{
+                .preset = @intFromEnum(self.config.preset),
+                .rate_control = @intFromEnum(self.config.rate_control),
+                .bitrate = self.config.bitrate,
+                .qp_init = self.config.qp_init,
+                .gop_length = self.config.gop_length,
+                .b_frames = self.config.b_frames,
+                .lookahead_depth = self.config.lookahead_depth,
+                .aq_enabled = self.config.aq_enabled,
+                .temporal_aq = self.config.temporal_aq,
+            }
         );
+        
+        try self.command_builder.scheduler.submitToQueue(0, encode_cmd);
         
         self.frame_count += 1;
         
-        // Determine frame type (simplified logic)
-        if (self.frame_count % self.config.gop_length == 1) {
-            output_buffer.frame_type = .i_frame;
-        } else if (self.config.b_frames > 0 and self.frame_count % 3 != 1) {
-            output_buffer.frame_type = .b_frame;
-        } else {
-            output_buffer.frame_type = .p_frame;
+        // Improved frame type determination with B-frame optimization
+        output_buffer.frame_type = self.determineFrameType();
+        output_buffer.timestamp = input_buffer.timestamp;
+        
+        // Performance optimization: kick immediately for low-latency
+        if (self.config.rate_control == .ll_hp or self.config.rate_control == .ll_hq) {
+            self.command_builder.scheduler.flushAllQueues() catch {};
+        }
+    }
+    
+    fn determineFrameType(self: *NvencSession) NvencFrameType {
+        // IDR frame at start and scene changes
+        if (self.frame_count == 1 or (self.frame_count % (self.config.gop_length * 8) == 1)) {
+            return .idr_frame;
         }
         
-        output_buffer.timestamp = input_buffer.timestamp;
+        // I-frame at GOP boundaries
+        if (self.frame_count % self.config.gop_length == 1) {
+            return .i_frame;
+        }
+        
+        // B-frame logic for better compression
+        if (self.config.b_frames > 0) {
+            const pos_in_gop = self.frame_count % self.config.gop_length;
+            const b_pattern = pos_in_gop % (self.config.b_frames + 1);
+            
+            if (b_pattern != 0 and b_pattern <= self.config.b_frames) {
+                return .b_frame;
+            }
+        }
+        
+        return .p_frame;
     }
     
     pub fn flush(self: *NvencSession) !void {
@@ -453,6 +488,36 @@ pub const NvencEncoder = struct {
     next_session_id: u32,
     device_generation: u8,
     max_sessions: u32,
+    performance_monitor: PerformanceMonitor,
+    
+    const PerformanceMonitor = struct {
+        frames_encoded: u64,
+        total_encoding_time: u64,
+        avg_bitrate: f32,
+        encoder_utilization: f32,
+        
+        pub fn init() PerformanceMonitor {
+            return PerformanceMonitor{
+                .frames_encoded = 0,
+                .total_encoding_time = 0,
+                .avg_bitrate = 0.0,
+                .encoder_utilization = 0.0,
+            };
+        }
+        
+        pub fn update(self: *PerformanceMonitor, encoding_time: u64, bitrate: u32) void {
+            self.frames_encoded += 1;
+            self.total_encoding_time += encoding_time;
+            
+            // Exponential moving average for bitrate
+            const alpha: f32 = 0.1;
+            self.avg_bitrate = self.avg_bitrate * (1.0 - alpha) + @as(f32, @floatFromInt(bitrate)) * alpha;
+            
+            // Calculate utilization (simplified)
+            const avg_frame_time = self.total_encoding_time / self.frames_encoded;
+            self.encoder_utilization = @min(1.0, @as(f32, @floatFromInt(avg_frame_time)) / (std.time.ns_per_s / 60));
+        }
+    };
     
     pub fn init(allocator: Allocator, memory_manager: *memory.DeviceMemoryManager, 
                command_builder: *command.CommandBuilder, device_generation: u8) NvencEncoder {
@@ -472,6 +537,7 @@ pub const NvencEncoder = struct {
             .next_session_id = 1,
             .device_generation = device_generation,
             .max_sessions = max_sessions,
+            .performance_monitor = PerformanceMonitor.init(),
         };
     }
     
@@ -603,6 +669,10 @@ pub const StreamingOptimizer = struct {
     current_bitrate: u32,
     frame_drops: u32,
     network_rtt: u32,
+    adaptive_bitrate: bool,
+    quality_metric: f32,
+    encoding_time_avg: f32,
+    target_frametime_ns: u64,
     
     pub fn init(target_bitrate: u32) StreamingOptimizer {
         return StreamingOptimizer{
@@ -610,6 +680,10 @@ pub const StreamingOptimizer = struct {
             .current_bitrate = target_bitrate,
             .frame_drops = 0,
             .network_rtt = 0,
+            .adaptive_bitrate = true,
+            .quality_metric = 1.0,
+            .encoding_time_avg = 0.0,
+            .target_frametime_ns = std.time.ns_per_s / 60, // 60 FPS default
         };
     }
     
@@ -628,13 +702,34 @@ pub const StreamingOptimizer = struct {
         var config = base_config;
         config.bitrate = self.current_bitrate;
         
-        if (self.network_rtt > 100) {
+        // Dynamic optimization based on conditions
+        if (self.network_rtt > 100 or self.encoding_time_avg > @as(f32, @floatFromInt(self.target_frametime_ns)) * 0.8) {
             config.optimize_for_low_latency();
+        } else if (self.quality_metric < 0.8) {
+            config.optimize_for_recording(); // Better quality when network allows
         } else {
             config.optimize_for_streaming();
         }
         
+        // Adaptive preset selection based on performance
+        if (self.encoding_time_avg > @as(f32, @floatFromInt(self.target_frametime_ns)) * 0.9) {
+            config.preset = .p1; // Fastest
+        } else if (self.encoding_time_avg < @as(f32, @floatFromInt(self.target_frametime_ns)) * 0.5) {
+            config.preset = .p6; // Higher quality when time allows
+        }
+        
         return config;
+    }
+    
+    pub fn update_encoding_stats(self: *StreamingOptimizer, encoding_time_ns: u64, output_size: u64) void {
+        const encoding_time_f = @as(f32, @floatFromInt(encoding_time_ns));
+        
+        // Exponential moving average for encoding time
+        self.encoding_time_avg = self.encoding_time_avg * 0.9 + encoding_time_f * 0.1;
+        
+        // Quality metric based on compression efficiency
+        const target_size = self.current_bitrate / 8; // Convert to bytes per second
+        self.quality_metric = @min(1.0, @as(f32, @floatFromInt(target_size)) / @as(f32, @floatFromInt(output_size)));
     }
 };
 
