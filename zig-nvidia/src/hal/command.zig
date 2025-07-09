@@ -1,10 +1,358 @@
 const std = @import("std");
-const linux = std.os.linux;
-const Allocator = std.mem.Allocator;
 const memory = @import("memory.zig");
-const pci = @import("pci.zig");
 
-// Command Buffer Submission Pipeline for NVIDIA GPU
+/// GPU Command Submission and Processing Infrastructure
+/// Handles all GPU command execution, scheduling, and synchronization
+pub const CommandProcessor = struct {
+    const Self = @This();
+
+    // Hardware state
+    bar0: *volatile u8,
+    fifo_regs: *volatile FifoRegisters,
+    pfifo_cache: *volatile PfifoCache,
+    
+    // Command ring buffers
+    pushbuffer: PushBuffer,
+    command_ring: CommandRing,
+    dma_buffers: std.ArrayList(DmaBuffer),
+    
+    // Synchronization
+    fence_manager: FenceManager,
+    semaphore_pool: SemaphorePool,
+    
+    // Performance
+    scheduler: CommandScheduler,
+    stats: CommandStats,
+    
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator, bar0_mapping: ?*anyopaque) !*Self {
+        if (bar0_mapping == null) return error.InvalidMapping;
+        
+        var self = try allocator.create(Self);
+        self.* = Self{
+            .bar0 = @ptrCast(@alignCast(bar0_mapping.?)),
+            .fifo_regs = @ptrCast(@alignCast(@as([*]u8, @ptrCast(bar0_mapping.?)) + FIFO_REGS_OFFSET)),
+            .pfifo_cache = @ptrCast(@alignCast(@as([*]u8, @ptrCast(bar0_mapping.?)) + PFIFO_CACHE_OFFSET)),
+            .pushbuffer = undefined,
+            .command_ring = undefined,
+            .dma_buffers = std.ArrayList(DmaBuffer).init(allocator),
+            .fence_manager = try FenceManager.init(allocator),
+            .semaphore_pool = try SemaphorePool.init(allocator),
+            .scheduler = try CommandScheduler.init(allocator),
+            .stats = .{},
+            .allocator = allocator,
+        };
+        
+        return self;
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.pushbuffer.deinit();
+        self.command_ring.deinit();
+        
+        for (self.dma_buffers.items) |*buffer| {
+            buffer.deinit();
+        }
+        self.dma_buffers.deinit();
+        
+        self.fence_manager.deinit();
+        self.semaphore_pool.deinit();
+        self.scheduler.deinit();
+        
+        self.allocator.destroy(self);
+    }
+
+    pub fn initialize(self: *Self) !void {
+        std.log.info("Initializing GPU command processor");
+        
+        // Initialize FIFO
+        try self.initializeFifo();
+        
+        // Setup pushbuffer
+        self.pushbuffer = try PushBuffer.init(self.allocator, PUSHBUFFER_SIZE);
+        
+        // Setup command ring
+        self.command_ring = try CommandRing.init(self.allocator, COMMAND_RING_SIZE);
+        
+        // Initialize DMA engines
+        try self.initializeDmaEngines();
+        
+        // Start command scheduler
+        try self.scheduler.start();
+        
+        std.log.info("Command processor initialized successfully");
+    }
+
+    pub fn submitCommands(self: *Self, commands: []const GpuCommand) !u64 {
+        const fence_id = try self.fence_manager.createFence();
+        
+        // Add commands to scheduler queue
+        const batch = CommandBatch{
+            .commands = commands,
+            .fence_id = fence_id,
+            .priority = .normal,
+            .timestamp = std.time.milliTimestamp(),
+        };
+        
+        try self.scheduler.submitBatch(batch);
+        
+        self.stats.commands_submitted += commands.len;
+        return fence_id;
+    }
+
+    pub fn waitForFence(self: *Self, fence_id: u64, timeout_ns: i64) !void {
+        return self.fence_manager.waitForFence(fence_id, timeout_ns);
+    }
+
+    pub fn handleFifoInterrupt(self: *Self) void {
+        const status = self.fifo_regs.intr_status;
+        
+        if (status & FIFO_INTR_DMA_PUSHER) {
+            self.handleDmaPusherInterrupt();
+        }
+        
+        if (status & FIFO_INTR_DMA_GET) {
+            self.handleDmaGetInterrupt();
+        }
+        
+        if (status & FIFO_INTR_CACHE_ERROR) {
+            self.handleCacheError();
+        }
+        
+        if (status & FIFO_INTR_RUNOUT) {
+            self.handleRunoutInterrupt();
+        }
+        
+        // Clear interrupt status
+        self.fifo_regs.intr_status = status;
+        
+        self.stats.interrupts_handled += 1;
+    }
+
+    pub fn resetFifo(self: *Self) !void {
+        std.log.warn("Resetting GPU FIFO");
+        
+        // Stop FIFO
+        self.fifo_regs.cache1_dma_control = 0;
+        self.fifo_regs.cache1_pusher_control = 0;
+        
+        // Wait for idle
+        var timeout: u32 = 1000;
+        while (timeout > 0 and (self.fifo_regs.cache1_dma_control & DMA_CONTROL_BUSY) != 0) {
+            std.time.sleep(1000000); // 1ms
+            timeout -= 1;
+        }
+        
+        if (timeout == 0) {
+            return error.FifoResetTimeout;
+        }
+        
+        // Reset pushbuffer pointers
+        self.pushbuffer.reset();
+        
+        // Clear error state
+        self.fifo_regs.cache1_dma_control = DMA_CONTROL_ENABLE;
+        self.fifo_regs.cache1_pusher_control = PUSHER_CONTROL_ENABLE;
+        
+        self.stats.fifo_resets += 1;
+        std.log.info("FIFO reset completed successfully");
+    }
+
+    fn initializeFifo(self: *Self) !void {
+        // Reset FIFO first
+        self.fifo_regs.cache1_dma_control = 0;
+        self.fifo_regs.cache1_pusher_control = 0;
+        
+        // Wait for idle
+        var timeout: u32 = 1000;
+        while (timeout > 0 and (self.fifo_regs.runout_status & RUNOUT_STATUS_ACTIVE) != 0) {
+            std.time.sleep(1000000);
+            timeout -= 1;
+        }
+        
+        if (timeout == 0) {
+            return error.FifoInitTimeout;
+        }
+        
+        // Configure FIFO parameters
+        self.fifo_regs.cache1_dma_control = DMA_CONTROL_PAGE_TABLE_PRESENT | DMA_CONTROL_TARGET_MEMORY;
+        self.fifo_regs.cache1_pusher_control = PUSHER_CONTROL_ENABLE;
+        
+        // Setup interrupt masks
+        self.fifo_regs.intr_enable = FIFO_INTR_DMA_PUSHER | FIFO_INTR_DMA_GET | 
+                                    FIFO_INTR_CACHE_ERROR | FIFO_INTR_RUNOUT;
+    }
+
+    fn initializeDmaEngines(self: *Self) !void {
+        // Initialize copy engines
+        for (0..MAX_COPY_ENGINES) |i| {
+            const ce_offset = COPY_ENGINE_BASE + i * COPY_ENGINE_SIZE;
+            const ce_regs = @as(*volatile CopyEngineRegs, @ptrCast(@alignCast(self.bar0 + ce_offset)));
+            
+            // Reset copy engine
+            ce_regs.control = 0;
+            ce_regs.status = 0xFFFFFFFF; // Clear all status bits
+            
+            // Enable copy engine
+            ce_regs.control = CE_CONTROL_ENABLE;
+        }
+        
+        // Initialize DMA buffers
+        for (0..DMA_BUFFER_COUNT) |i| {
+            const buffer = try DmaBuffer.init(self.allocator, DMA_BUFFER_SIZE);
+            try self.dma_buffers.append(buffer);
+        }
+    }
+
+    fn handleDmaPusherInterrupt(self: *Self) void {
+        const get_ptr = self.fifo_regs.cache1_dma_get;
+        const put_ptr = self.fifo_regs.cache1_dma_put;
+        
+        // Process completed commands
+        self.pushbuffer.updateGetPointer(get_ptr);
+        
+        // Signal any waiting fences
+        self.fence_manager.checkCompletedFences(get_ptr);
+    }
+
+    fn handleDmaGetInterrupt(self: *Self) void {
+        // DMA GET pointer advanced, update our tracking
+        const new_get = self.fifo_regs.cache1_dma_get;
+        self.command_ring.updateProcessedPointer(new_get);
+    }
+
+    fn handleCacheError(self: *Self) void {
+        const error_code = self.fifo_regs.cache1_dma_status;
+        std.log.err("GPU cache error: 0x{x:0>8}", .{error_code});
+        
+        // Attempt recovery
+        self.resetFifo() catch |err| {
+            std.log.err("Failed to recover from cache error: {}", .{err});
+        };
+        
+        self.stats.cache_errors += 1;
+    }
+
+    fn handleRunoutInterrupt(self: *Self) void {
+        std.log.warn("GPU command buffer runout detected");
+        
+        // Expand pushbuffer if possible
+        self.pushbuffer.expand() catch |err| {
+            std.log.err("Failed to expand pushbuffer: {}", .{err});
+        };
+        
+        self.stats.runout_events += 1;
+    }
+};
+
+/// GPU Command Types and Structures
+pub const GpuCommand = struct {
+    opcode: CommandOpcode,
+    data: CommandData,
+    
+    pub const CommandOpcode = enum(u32) {
+        nop = 0x00000000,
+        fence = 0x00000001,
+        memory_copy = 0x00000002,
+        compute_launch = 0x00000003,
+        graphics_draw = 0x00000004,
+        video_encode = 0x00000005,
+        video_decode = 0x00000006,
+        display_flip = 0x00000007,
+        semaphore_acquire = 0x00000008,
+        semaphore_release = 0x00000009,
+        _,
+    };
+    
+    pub const CommandData = union(CommandOpcode) {
+        nop: void,
+        fence: FenceCommand,
+        memory_copy: MemoryCopyCommand,
+        compute_launch: ComputeLaunchCommand,
+        graphics_draw: GraphicsDrawCommand,
+        video_encode: VideoEncodeCommand,
+        video_decode: VideoDecodeCommand,
+        display_flip: DisplayFlipCommand,
+        semaphore_acquire: SemaphoreCommand,
+        semaphore_release: SemaphoreCommand,
+    };
+};
+
+pub const FenceCommand = struct {
+    fence_id: u64,
+    value: u64,
+};
+
+pub const MemoryCopyCommand = struct {
+    src_address: u64,
+    dst_address: u64,
+    size: u64,
+    copy_engine_id: u8,
+};
+
+pub const ComputeLaunchCommand = struct {
+    kernel_address: u64,
+    grid_size: [3]u32,
+    block_size: [3]u32,
+    shared_memory_size: u32,
+    parameter_buffer: u64,
+};
+
+pub const GraphicsDrawCommand = struct {
+    vertex_buffer: u64,
+    index_buffer: u64,
+    vertex_count: u32,
+    index_count: u32,
+    primitive_type: PrimitiveType,
+    
+    pub const PrimitiveType = enum(u32) {
+        points = 0,
+        lines = 1,
+        triangles = 2,
+        quads = 3,
+    };
+};
+
+pub const VideoEncodeCommand = struct {
+    input_surface: u64,
+    output_buffer: u64,
+    codec: VideoCodec,
+    bitrate: u32,
+    quality: u8,
+    
+    pub const VideoCodec = enum(u8) {
+        h264 = 0,
+        h265 = 1,
+        av1 = 2,
+    };
+};
+
+pub const VideoDecodeCommand = struct {
+    input_buffer: u64,
+    output_surface: u64,
+    codec: VideoEncodeCommand.VideoCodec,
+    frame_size: [2]u32,
+};
+
+pub const DisplayFlipCommand = struct {
+    surface_address: u64,
+    head_id: u8,
+    scanout_id: u8,
+    format: PixelFormat,
+    
+    pub const PixelFormat = enum(u8) {
+        argb8888 = 0,
+        xrgb8888 = 1,
+        rgb565 = 2,
+        rgba1010102 = 3,
+    };
+};
+
+pub const SemaphoreCommand = struct {
+    semaphore_address: u64,
+    value: u32,
+};
 
 pub const CommandError = error{
     InvalidCommand,

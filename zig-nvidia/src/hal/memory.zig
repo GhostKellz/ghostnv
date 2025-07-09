@@ -1,8 +1,460 @@
 const std = @import("std");
-const linux = std.os.linux;
-const fs = std.fs;
 const Allocator = std.mem.Allocator;
 const pci = @import("pci.zig");
+
+/// Unified Virtual Addressing (UVA) Support
+/// Provides unified virtual address space between CPU and GPU
+pub const UVAManager = struct {
+    const Self = @This();
+    
+    allocator: Allocator,
+    virtual_address_space: AddressSpace,
+    cpu_gpu_mappings: std.AutoHashMap(u64, MappingInfo),
+    numa_nodes: []NumaNode,
+    
+    pub const AddressSpace = struct {
+        base_address: u64,
+        size: u64,
+        page_table: *PageTable,
+        used_regions: std.ArrayList(VirtualRegion),
+        
+        pub const VirtualRegion = struct {
+            virtual_address: u64,
+            size: u64,
+            physical_address: u64,
+            memory_type: MemoryType,
+            flags: MemoryFlags,
+        };
+    };
+    
+    pub const MappingInfo = struct {
+        cpu_address: u64,
+        gpu_address: u64,
+        size: u64,
+        coherent: bool,
+        numa_node: u8,
+    };
+    
+    pub const NumaNode = struct {
+        node_id: u8,
+        cpu_cores: []u8,
+        memory_base: u64,
+        memory_size: u64,
+        gpu_affinity: ?u8,
+    };
+    
+    pub fn init(allocator: Allocator) !Self {
+        var self = Self{
+            .allocator = allocator,
+            .virtual_address_space = undefined,
+            .cpu_gpu_mappings = std.AutoHashMap(u64, MappingInfo).init(allocator),
+            .numa_nodes = &.{},
+        };
+        
+        // Initialize 48-bit virtual address space
+        const vas_size = @as(u64, 1) << 48; // 256TB virtual address space
+        self.virtual_address_space = AddressSpace{
+            .base_address = 0x10000000000, // Start at 1TB
+            .size = vas_size,
+            .page_table = try PageTable.init(allocator, vas_size, 4096),
+            .used_regions = std.ArrayList(AddressSpace.VirtualRegion).init(allocator),
+        };
+        
+        // Detect NUMA topology
+        try self.detectNumaTopology();
+        
+        return self;
+    }
+    
+    pub fn deinit(self: *Self) void {
+        self.virtual_address_space.page_table.deinit();
+        self.virtual_address_space.used_regions.deinit();
+        self.cpu_gpu_mappings.deinit();
+        if (self.numa_nodes.len > 0) {
+            self.allocator.free(self.numa_nodes);
+        }
+    }
+    
+    pub fn allocateUnified(
+        self: *Self,
+        size: u64,
+        alignment: u64,
+        preferred_node: ?u8,
+    ) !UVAAllocation {
+        const aligned_size = alignUp(size, alignment);
+        
+        // Find virtual address space
+        const virtual_addr = try self.findVirtualSpace(aligned_size, alignment);
+        
+        // Allocate physical memory on preferred NUMA node
+        const numa_node = preferred_node orelse self.selectOptimalNode(size);
+        const physical_addr = try self.allocatePhysicalOnNode(aligned_size, numa_node);
+        
+        // Create CPU-GPU unified mapping
+        try self.virtual_address_space.page_table.map_page(virtual_addr, physical_addr);
+        
+        const allocation = UVAAllocation{
+            .virtual_address = virtual_addr,
+            .size = aligned_size,
+            .numa_node = numa_node,
+            .coherent = true,
+        };
+        
+        // Track mapping
+        try self.cpu_gpu_mappings.put(virtual_addr, MappingInfo{
+            .cpu_address = virtual_addr,
+            .gpu_address = virtual_addr, // Unified addressing
+            .size = aligned_size,
+            .coherent = true,
+            .numa_node = numa_node,
+        });
+        
+        return allocation;
+    }
+    
+    pub fn freeUnified(self: *Self, allocation: UVAAllocation) !void {
+        // Unmap from page table
+        for (0..allocation.size / 4096) |i| {
+            const page_addr = allocation.virtual_address + i * 4096;
+            self.virtual_address_space.page_table.unmap_page(page_addr);
+        }
+        
+        // Remove mapping tracking
+        _ = self.cpu_gpu_mappings.remove(allocation.virtual_address);
+        
+        // Free physical memory
+        try self.freePhysicalOnNode(allocation.virtual_address, allocation.size, allocation.numa_node);
+    }
+    
+    fn detectNumaTopology(self: *Self) !void {
+        // Simplified NUMA detection
+        // In real implementation, read from /sys/devices/system/node/
+        
+        const node_count = 2; // Assume 2 NUMA nodes
+        self.numa_nodes = try self.allocator.alloc(NumaNode, node_count);
+        
+        for (0..node_count) |i| {
+            self.numa_nodes[i] = NumaNode{
+                .node_id = @intCast(i),
+                .cpu_cores = &.{}, // Would be populated from sysfs
+                .memory_base = @as(u64, i) * (32 * 1024 * 1024 * 1024), // 32GB per node
+                .memory_size = 32 * 1024 * 1024 * 1024,
+                .gpu_affinity = if (i == 0) 0 else null, // GPU on node 0
+            };
+        }
+    }
+    
+    fn selectOptimalNode(self: *Self, size: u64) u8 {
+        _ = size;
+        
+        // Find node with GPU affinity first
+        for (self.numa_nodes) |node| {
+            if (node.gpu_affinity != null) {
+                return node.node_id;
+            }
+        }
+        
+        return 0; // Fallback to node 0
+    }
+    
+    fn findVirtualSpace(self: *Self, size: u64, alignment: u64) !u64 {
+        var current_addr = alignUp(self.virtual_address_space.base_address, alignment);
+        
+        // Simple linear search for free space
+        for (self.virtual_address_space.used_regions.items) |region| {
+            if (current_addr + size <= region.virtual_address) {
+                break; // Found space before this region
+            }
+            current_addr = alignUp(region.virtual_address + region.size, alignment);
+        }
+        
+        if (current_addr + size > self.virtual_address_space.base_address + self.virtual_address_space.size) {
+            return MemoryError.OutOfMemory;
+        }
+        
+        // Add to used regions
+        try self.virtual_address_space.used_regions.append(AddressSpace.VirtualRegion{
+            .virtual_address = current_addr,
+            .size = size,
+            .physical_address = 0, // Will be set during mapping
+            .memory_type = .system,
+            .flags = MemoryFlags{},
+        });
+        
+        return current_addr;
+    }
+    
+    fn allocatePhysicalOnNode(self: *Self, size: u64, node: u8) !u64 {
+        _ = self;
+        _ = size;
+        _ = node;
+        
+        // In real implementation, use alloc_pages_node()
+        return 0x100000000; // Fake physical address
+    }
+    
+    fn freePhysicalOnNode(self: *Self, addr: u64, size: u64, node: u8) !void {
+        _ = self;
+        _ = addr;
+        _ = size;
+        _ = node;
+        
+        // In real implementation, use __free_pages()
+    }
+};
+
+pub const UVAAllocation = struct {
+    virtual_address: u64,
+    size: u64,
+    numa_node: u8,
+    coherent: bool,
+};
+
+/// Copy Engine Optimization for Memory Transfers
+pub const CopyEngineOptimizer = struct {
+    const Self = @This();
+    
+    allocator: Allocator,
+    copy_engines: []CopyEngine,
+    transfer_queue: std.PriorityQueue(TransferRequest, void, compareTransferPriority),
+    active_transfers: std.ArrayList(ActiveTransfer),
+    
+    pub const CopyEngine = struct {
+        id: u8,
+        available: bool,
+        current_transfer: ?*ActiveTransfer,
+        bandwidth_mbps: u32,
+        latency_us: u32,
+    };
+    
+    pub const TransferRequest = struct {
+        src_address: u64,
+        dst_address: u64,
+        size: u64,
+        priority: TransferPriority,
+        completion_callback: ?*const fn (*TransferRequest) void,
+        
+        pub const TransferPriority = enum(u8) {
+            low = 0,
+            normal = 1,
+            high = 2,
+            critical = 3,
+        };
+    };
+    
+    pub const ActiveTransfer = struct {
+        request: TransferRequest,
+        engine_id: u8,
+        start_time: u64,
+        estimated_completion: u64,
+    };
+    
+    pub fn init(allocator: Allocator, num_engines: u8) !Self {
+        var self = Self{
+            .allocator = allocator,
+            .copy_engines = try allocator.alloc(CopyEngine, num_engines),
+            .transfer_queue = std.PriorityQueue(TransferRequest, void, compareTransferPriority).init(allocator, {}),
+            .active_transfers = std.ArrayList(ActiveTransfer).init(allocator),
+        };
+        
+        // Initialize copy engines with different capabilities
+        for (0..num_engines) |i| {
+            self.copy_engines[i] = CopyEngine{
+                .id = @intCast(i),
+                .available = true,
+                .current_transfer = null,
+                .bandwidth_mbps = switch (i) {
+                    0 => 25000, // Primary engine - 25 GB/s
+                    1 => 20000, // Secondary - 20 GB/s
+                    else => 15000, // Others - 15 GB/s
+                },
+                .latency_us = @intCast(100 + i * 50), // Increasing latency
+            };
+        }
+        
+        return self;
+    }
+    
+    pub fn deinit(self: *Self) void {
+        self.allocator.free(self.copy_engines);
+        self.transfer_queue.deinit();
+        self.active_transfers.deinit();
+    }
+    
+    pub fn submitTransfer(self: *Self, request: TransferRequest) !void {
+        try self.transfer_queue.add(request);
+        try self.scheduleTransfers();
+    }
+    
+    pub fn scheduleTransfers(self: *Self) !void {
+        // Find available engines and schedule highest priority transfers
+        for (self.copy_engines) |*engine| {
+            if (engine.available and self.transfer_queue.count() > 0) {
+                const request = self.transfer_queue.remove();
+                const estimated_time = self.estimateTransferTime(request, engine);
+                
+                const active_transfer = ActiveTransfer{
+                    .request = request,
+                    .engine_id = engine.id,
+                    .start_time = std.time.milliTimestamp(),
+                    .estimated_completion = std.time.milliTimestamp() + estimated_time,
+                };
+                
+                try self.active_transfers.append(active_transfer);
+                engine.available = false;
+                engine.current_transfer = &self.active_transfers.items[self.active_transfers.items.len - 1];
+                
+                // Start actual transfer
+                try self.startHardwareTransfer(request, engine.id);
+            }
+        }
+    }
+    
+    fn estimateTransferTime(self: *Self, request: TransferRequest, engine: *CopyEngine) u64 {
+        _ = self;
+        const bandwidth_bps = @as(u64, engine.bandwidth_mbps) * 1024 * 1024;
+        const transfer_time_ms = (request.size * 1000) / bandwidth_bps;
+        return transfer_time_ms + engine.latency_us / 1000;
+    }
+    
+    fn startHardwareTransfer(self: *Self, request: TransferRequest, engine_id: u8) !void {
+        _ = self;
+        _ = engine_id;
+        
+        std.log.debug("Starting copy engine {} transfer: 0x{X} -> 0x{X} ({} bytes)", .{
+            engine_id,
+            request.src_address,
+            request.dst_address,
+            request.size,
+        });
+        
+        // In real implementation:
+        // - Program copy engine registers
+        // - Set up source and destination addresses
+        // - Configure transfer size and flags
+        // - Start the transfer
+    }
+    
+    fn compareTransferPriority(context: void, a: TransferRequest, b: TransferRequest) std.math.Order {
+        _ = context;
+        return std.math.order(@intFromEnum(b.priority), @intFromEnum(a.priority));
+    }
+};
+
+/// Smart Caching for Frequently Accessed Data
+pub const MemoryCache = struct {
+    const Self = @This();
+    
+    allocator: Allocator,
+    cache_entries: std.AutoHashMap(u64, CacheEntry),
+    lru_list: std.ArrayList(u64),
+    total_size: u64,
+    used_size: u64,
+    hit_count: u64,
+    miss_count: u64,
+    
+    pub const CacheEntry = struct {
+        address: u64,
+        size: u64,
+        data: []u8,
+        access_count: u32,
+        last_access: u64,
+        dirty: bool,
+    };
+    
+    pub fn init(allocator: Allocator, cache_size: u64) Self {
+        return Self{
+            .allocator = allocator,
+            .cache_entries = std.AutoHashMap(u64, CacheEntry).init(allocator),
+            .lru_list = std.ArrayList(u64).init(allocator),
+            .total_size = cache_size,
+            .used_size = 0,
+            .hit_count = 0,
+            .miss_count = 0,
+        };
+    }
+    
+    pub fn deinit(self: *Self) void {
+        var iterator = self.cache_entries.iterator();
+        while (iterator.next()) |entry| {
+            self.allocator.free(entry.value_ptr.data);
+        }
+        self.cache_entries.deinit();
+        self.lru_list.deinit();
+    }
+    
+    pub fn get(self: *Self, address: u64, size: u64) ?[]const u8 {
+        if (self.cache_entries.get(address)) |*entry| {
+            if (entry.size >= size) {
+                self.hit_count += 1;
+                entry.access_count += 1;
+                entry.last_access = std.time.milliTimestamp();
+                self.updateLRU(address);
+                return entry.data[0..size];
+            }
+        }
+        
+        self.miss_count += 1;
+        return null;
+    }
+    
+    pub fn put(self: *Self, address: u64, data: []const u8) !void {
+        // Check if we need to evict entries
+        while (self.used_size + data.len > self.total_size and self.lru_list.items.len > 0) {
+            try self.evictLRU();
+        }
+        
+        if (self.used_size + data.len > self.total_size) {
+            return MemoryError.OutOfMemory;
+        }
+        
+        // Copy data
+        const cache_data = try self.allocator.alloc(u8, data.len);
+        @memcpy(cache_data, data);
+        
+        const entry = CacheEntry{
+            .address = address,
+            .size = data.len,
+            .data = cache_data,
+            .access_count = 1,
+            .last_access = std.time.milliTimestamp(),
+            .dirty = false,
+        };
+        
+        try self.cache_entries.put(address, entry);
+        try self.lru_list.append(address);
+        self.used_size += data.len;
+    }
+    
+    fn updateLRU(self: *Self, address: u64) void {
+        // Move to end of LRU list
+        for (self.lru_list.items, 0..) |addr, i| {
+            if (addr == address) {
+                _ = self.lru_list.swapRemove(i);
+                self.lru_list.append(address) catch {};
+                break;
+            }
+        }
+    }
+    
+    fn evictLRU(self: *Self) !void {
+        if (self.lru_list.items.len == 0) return;
+        
+        const address = self.lru_list.items[0];
+        if (self.cache_entries.get(address)) |entry| {
+            self.used_size -= entry.size;
+            self.allocator.free(entry.data);
+            _ = self.cache_entries.remove(address);
+            _ = self.lru_list.swapRemove(0);
+        }
+    }
+    
+    pub fn getHitRate(self: *Self) f32 {
+        const total = self.hit_count + self.miss_count;
+        if (total == 0) return 0.0;
+        return @as(f32, @floatFromInt(self.hit_count)) / @as(f32, @floatFromInt(total));
+    }
+};
 
 // Memory Management for NVIDIA GPU VRAM and system memory
 
