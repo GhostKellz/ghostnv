@@ -1,5 +1,5 @@
 const std = @import("std");
-const kernel_module = @import("../kernel/module.zig");
+const kernel_module = @import("module.zig");
 const display = @import("../display/engine.zig");
 const video = @import("../video/processor.zig");
 const audio = @import("../audio/rtx_voice.zig");
@@ -470,7 +470,7 @@ pub const DriverState = enum {
     suspending,
     suspended,
     resuming,
-    error,
+    err,
 };
 
 /// Driver statistics

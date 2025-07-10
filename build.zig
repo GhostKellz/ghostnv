@@ -41,12 +41,19 @@ pub fn build(b: *std.Build) void {
     build_options.addOption(bool, "gaming_mode", gaming_mode);
     build_options.addOption(bool, "frame_gen_mode", frame_gen_mode);
 
-    // GhostNV module
+    // GhostNV module - for external kernel integration
     const ghostnv_mod = b.addModule("ghostnv", .{
-        .root_source_file = b.path("zig/ghostnv.zig"),
+        .root_source_file = b.path("zig-nvidia/src/ghostnv.zig"),
         .target = target,
     });
     ghostnv_mod.addOptions("build_options", build_options);
+    
+    // Legacy module for backward compatibility
+    const ghostnv_legacy_mod = b.addModule("ghostnv-legacy", .{
+        .root_source_file = b.path("zig/ghostnv.zig"),
+        .target = target,
+    });
+    ghostnv_legacy_mod.addOptions("build_options", build_options);
 
     // Main executable
     const exe = b.addExecutable(.{

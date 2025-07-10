@@ -569,7 +569,7 @@ pub const ArchConfig = struct {
     }
     
     /// Validate system configuration
-    pub fn validateConfiguration(self: *ArchConfig) !bool {
+    pub fn validateConfiguration(self: *ArchConfig) !bool {\n        _ = self;
         // Check if NVIDIA driver is loaded
         const nvidia_loaded = std.process.hasEnvVar("NVIDIA_DRIVER_VERSION");
         

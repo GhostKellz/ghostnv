@@ -493,7 +493,7 @@ pub const SessionState = enum {
     idle,
     encoding,
     decoding,
-    error,
+    err,
 };
 
 pub const VideoFrame = struct {

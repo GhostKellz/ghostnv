@@ -8,7 +8,7 @@
 
 ```bash
 # Clone and build
-git clone https://github.com/yourusername/ghostnv.git
+git clone https://github.com/ghostkellz/ghostnv.git
 cd ghostnv
 
 # Build everything

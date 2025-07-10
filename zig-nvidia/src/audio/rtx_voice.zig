@@ -668,7 +668,7 @@ pub const StreamState = enum {
     idle,
     processing,
     stopping,
-    error,
+    err,
 };
 
 pub const ProcessingMode = enum {
