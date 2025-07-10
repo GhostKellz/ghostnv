@@ -172,11 +172,11 @@ fn handle_realtime(allocator: std.mem.Allocator) !void {
 }
 
 fn handle_audio(allocator: std.mem.Allocator) !void {
-    print("Initializing RTX Voice/Audio support\n");
+    print("Initializing PipeWire audio support\n");
     
     var audio_manager = ghostnv.AudioManager.init(allocator);
-    try audio_manager.enable_rtx_voice();
-    try audio_manager.setup_noise_cancellation();
+    try audio_manager.enable_pipewire_integration();
+    try audio_manager.setup_hdmi_audio();
 
     const version = ghostnv.DriverVersion{ .major = 575, .minor = 0, .patch = 0 };
     var patch_manager = ghostnv.PatchManager.init(allocator, "patches", version);

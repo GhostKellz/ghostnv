@@ -2,7 +2,7 @@ const std = @import("std");
 const kernel_module = @import("module.zig");
 const display = @import("../display/engine.zig");
 const video = @import("../video/processor.zig");
-const audio = @import("../audio/rtx_voice.zig");
+const audio = @import("../audio/pipewire_integration.zig");
 const cuda = @import("../cuda/runtime.zig");
 const memory = @import("../hal/memory.zig");
 const command = @import("../hal/command.zig");
@@ -19,7 +19,7 @@ pub const GhostKernelIntegration = struct {
     // Driver subsystems
     display_engine: *display.DisplayEngine,
     video_processor: *video.VideoProcessor,
-    audio_engine: *audio.RTXVoiceEngine,
+    audio_integration: *audio.PipeWireIntegration,
     cuda_runtime: *cuda.CudaRuntime,
     memory_manager: *memory.MemoryManager,
     command_processor: *command.CommandProcessor,
@@ -55,8 +55,8 @@ pub const GhostKernelIntegration = struct {
         // Initialize video processor
         self.video_processor = try video.VideoProcessor.init(allocator, kernel_ctx, self.memory_manager);
         
-        // Initialize audio engine
-        self.audio_engine = try audio.RTXVoiceEngine.init(allocator, self.cuda_runtime, self.memory_manager);
+        // Initialize audio integration
+        self.audio_integration = try audio.PipeWireIntegration.init(allocator);
         
         // Initialize kernel interface
         self.kernel_interface = try KernelInterface.init(allocator, self);
@@ -69,7 +69,7 @@ pub const GhostKernelIntegration = struct {
             .kernel_module = self.kernel_module,
             .display_engine = self.display_engine,
             .video_processor = self.video_processor,
-            .audio_engine = self.audio_engine,
+            .audio_integration = self.audio_integration,
             .cuda_runtime = self.cuda_runtime,
             .memory_manager = self.memory_manager,
             .command_processor = self.command_processor,
@@ -85,7 +85,7 @@ pub const GhostKernelIntegration = struct {
     pub fn deinit(self: *Self) void {
         self.arch_manager.deinit();
         self.kernel_interface.deinit();
-        self.audio_engine.deinit();
+        self.audio_integration.deinit();
         self.video_processor.deinit();
         self.display_engine.deinit();
         self.cuda_runtime.deinit();
@@ -275,9 +275,19 @@ pub const GhostKernelIntegration = struct {
     }
     
     fn initializeAudioSubsystem(self: *Self) !void {
-        _ = self;
         std.log.info("Initializing audio subsystem...");
-        // Audio engine is already initialized in init()
+        
+        // Register HDMI and DisplayPort audio outputs for each display
+        // This will be called when displays are detected
+        for (self.kernel_module.devices.items, 0..) |*device, i| {
+            // Register HDMI outputs for this GPU
+            try self.audio_integration.registerHDMIOutput(@intCast(i), .HDMI);
+            
+            // Register DisplayPort outputs for this GPU  
+            try self.audio_integration.registerDisplayPort(@intCast(i), 4); // 4 lanes typical
+        }
+        
+        std.log.info("Audio subsystem initialized with PipeWire integration");
     }
     
     fn initializeCudaSubsystem(self: *Self) !void {

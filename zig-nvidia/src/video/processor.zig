@@ -548,7 +548,7 @@ pub const DecodeConfig = struct {
     max_surfaces: u32,
 };
 
-pub const EncodePreset = struct {
+pub const EncodeConfiguration = struct {
     name: []const u8,
     codec: VideoCodec,
     profile: VideoProfile,
