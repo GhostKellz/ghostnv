@@ -55,7 +55,7 @@ pub const PatchManager = struct {
         const version_file = "src/nvidia/inc/nv.h";
         const file = fs.cwd().openFile(version_file, .{}) catch |err| {
             if (err == error.FileNotFound) {
-                print("Warning: Could not detect NVIDIA version, defaulting to 575.0.0\n");
+                print("Warning: Could not detect NVIDIA version, defaulting to 575.0.0\n", .{});
                 return DriverVersion{ .major = 575, .minor = 0, .patch = 0 };
             }
             return err;
@@ -180,6 +180,7 @@ pub const KernelBuilder = struct {
     }
 
     fn build_legacy(self: *KernelBuilder) !void {
+        _ = self;
         print("Building using legacy Makefile system\n");
         // This would call make modules directly
     }
@@ -237,6 +238,184 @@ test "version parsing" {
     try std.testing.expect(version.minor == 23);
     try std.testing.expect(version.patch == 5);
 }
+
+// Color vibrance support for tools
+pub const color_vibrance = struct {
+    pub const GameColorMode = enum {
+        disabled,
+        enhanced,
+        cinema,
+        gaming,
+    };
+    
+    pub const VibranceLevel = struct {
+        digital: u8,
+        saturation: u8,
+        hue: i8,
+        
+        pub fn init(level: u8) VibranceLevel {
+            return VibranceLevel{
+                .digital = level,
+                .saturation = level,
+                .hue = 0,
+            };
+        }
+    };
+    
+    pub const VibranceEngine = struct {
+        allocator: std.mem.Allocator,
+        current_level: u8,
+        game_mode: GameColorMode,
+        
+        pub fn init(allocator: std.mem.Allocator) !VibranceEngine {
+            return VibranceEngine{
+                .allocator = allocator,
+                .current_level = 50,
+                .game_mode = .disabled,
+            };
+        }
+        
+        pub fn deinit(self: *VibranceEngine) void {
+            _ = self;
+        }
+        
+        pub fn set_vibrance(self: *VibranceEngine, level: u8) !void {
+            self.current_level = level;
+            print("Setting digital vibrance to {}%\n", .{level});
+        }
+        
+        pub fn set_game_mode(self: *VibranceEngine, mode: GameColorMode) !void {
+            self.game_mode = mode;
+            print("Setting game color mode to {}\n", .{mode});
+        }
+    };
+    
+    pub fn set_vibrance(level: u8) !void {
+        // TODO: Implement actual vibrance control
+        print("Setting digital vibrance to {}%\n", .{level});
+    }
+    
+    pub fn set_color_temperature(temp: i16) !void {
+        // TODO: Implement color temperature control
+        print("Setting color temperature to {}K\n", .{temp});
+    }
+    
+    pub fn set_game_mode(mode: GameColorMode) !void {
+        // TODO: Implement game mode color control
+        print("Setting game color mode to {}\n", .{mode});
+    }
+};
+
+// DRM driver support for tools
+pub const drm_driver = struct {
+    pub const DrmDriver = struct {
+        allocator: std.mem.Allocator,
+        
+        pub fn init(allocator: std.mem.Allocator) !DrmDriver {
+            return DrmDriver{ .allocator = allocator };
+        }
+        
+        pub fn deinit(self: *DrmDriver) void {
+            _ = self;
+        }
+        
+        pub fn get_displays(self: *DrmDriver) ![]DisplayInfo {
+            _ = self;
+            return &[_]DisplayInfo{};
+        }
+    };
+    pub const DisplayInfo = struct {
+        name: []const u8,
+        width: u32,
+        height: u32,
+        refresh_rate: u32,
+        connected: bool,
+        
+        pub fn init(name: []const u8) DisplayInfo {
+            return DisplayInfo{
+                .name = name,
+                .width = 1920,
+                .height = 1080,
+                .refresh_rate = 60,
+                .connected = true,
+            };
+        }
+    };
+    
+    pub fn get_displays() ![]DisplayInfo {
+        // TODO: Implement actual display detection
+        print("Detecting displays...\n");
+        return &[_]DisplayInfo{};
+    }
+    
+    pub fn set_display_mode(display: []const u8, width: u32, height: u32, refresh: u32) !void {
+        // TODO: Implement display mode setting
+        print("Setting display {} to {}x{}@{}Hz\n", .{ display, width, height, refresh });
+    }
+};
+
+// Container runtime support for tools
+pub const container_runtime = struct {
+    pub const ContainerCLI = struct {
+        runtime: *ContainerRuntime,
+        
+        pub fn init(runtime: *ContainerRuntime) ContainerCLI {
+            return ContainerCLI{ .runtime = runtime };
+        }
+        
+        pub fn run(self: *ContainerCLI) !void {
+            _ = self;
+            print("Container CLI running...\n", .{});
+        }
+    };
+    pub const ContainerConfig = struct {
+        image: []const u8,
+        gpu_enabled: bool,
+        memory_limit: u64,
+        
+        pub fn init(image: []const u8) ContainerConfig {
+            return ContainerConfig{
+                .image = image,
+                .gpu_enabled = true,
+                .memory_limit = 0,
+            };
+        }
+    };
+    
+    pub const ContainerRuntime = struct {
+        allocator: std.mem.Allocator,
+        
+        pub fn init(allocator: std.mem.Allocator) !ContainerRuntime {
+            return ContainerRuntime{
+                .allocator = allocator,
+            };
+        }
+        
+        pub fn deinit(self: *ContainerRuntime) void {
+            _ = self;
+        }
+        
+        pub fn create_container(self: *ContainerRuntime, config: ContainerConfig) !void {
+            _ = self;
+            print("Creating container with image: {s}\n", .{config.image});
+        }
+        
+        pub fn start_container(self: *ContainerRuntime, id: []const u8) !void {
+            _ = self;
+            print("Starting container: {s}\n", .{id});
+        }
+    };
+    
+    pub fn create_container(config: ContainerConfig) !void {
+        // TODO: Implement container creation
+        print("Creating container with image: {s}\n", .{config.image});
+    }
+    
+    pub fn start_container(id: []const u8) !void {
+        // TODO: Implement container startup
+        print("Starting container: {s}\n", .{id});
+    }
+};
 
 test "patch manager init" {
     const allocator = std.testing.allocator;

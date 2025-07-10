@@ -717,6 +717,17 @@ pub const VibranceEngine = struct {
             .backend = self.backend,
         };
     }
+    
+    // Convenience methods for FFI compatibility
+    pub fn auto_detect_game(self: *VibranceEngine, window_title: []const u8) !void {
+        if (self.auto_detect_game_profile(window_title)) |profile_name| {
+            try self.apply_profile(profile_name);
+        }
+    }
+    
+    pub fn disable(self: *VibranceEngine) !void {
+        try self.disable_vibrance();
+    }
 };
 
 pub const PerformanceStats = struct {

@@ -236,6 +236,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "zig-nvidia", .module = zig_nvidia_mod },
+                .{ .name = "ghostnv", .module = ghostnv_mod },
             },
         }),
     });
@@ -254,6 +255,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "zig-nvidia", .module = zig_nvidia_mod },
+                .{ .name = "ghostnv", .module = ghostnv_mod },
             },
         }),
     });

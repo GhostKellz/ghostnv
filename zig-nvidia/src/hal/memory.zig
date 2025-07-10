@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const pci = @import("pci.zig");
+const linux = std.os.linux;
 
 /// Unified Virtual Addressing (UVA) Support
 /// Provides unified virtual address space between CPU and GPU
@@ -319,7 +320,6 @@ pub const CopyEngineOptimizer = struct {
     
     fn startHardwareTransfer(self: *Self, request: TransferRequest, engine_id: u8) !void {
         _ = self;
-        _ = engine_id;
         
         std.log.debug("Starting copy engine {} transfer: 0x{X} -> 0x{X} ({} bytes)", .{
             engine_id,
@@ -923,6 +923,7 @@ pub const MemoryPool = struct {
     }
     
     fn moveAllocation(self: *MemoryPool, region: *MemoryRegion, new_phys_addr: u64) !void {
+        _ = self;
         const old_addr = region.physical_address;
         
         // In a real implementation, this would involve:

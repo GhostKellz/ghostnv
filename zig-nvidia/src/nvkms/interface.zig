@@ -251,7 +251,6 @@ pub const NvKmsInterface = struct {
             return switch (std.posix.errno(result)) {
                 .INVAL => NvKmsError.InvalidParameter,
                 .NODEV => NvKmsError.DeviceNotFound,
-                .NOTSUP => NvKmsError.NotSupported,
                 else => NvKmsError.HardwareError,
             };
         }
@@ -295,7 +294,6 @@ pub const NvKmsInterface = struct {
             return switch (std.posix.errno(result)) {
                 .INVAL => NvKmsError.InvalidParameter,
                 .NODEV => NvKmsError.DeviceNotFound,
-                .NOTSUP => NvKmsError.NotSupported,
                 else => NvKmsError.HardwareError,
             };
         }
@@ -322,9 +320,9 @@ pub const NvKmsInterface = struct {
             .display_handle = display_handle,
             .lut_type = lut_type,
             .size = @intCast(red_lut.len),
-            .red_lut = red_lut.ptr,
-            .green_lut = green_lut.ptr,
-            .blue_lut = blue_lut.ptr,
+            .red_lut = @constCast(red_lut.ptr),
+            .green_lut = @constCast(green_lut.ptr),
+            .blue_lut = @constCast(blue_lut.ptr),
             .reserved = std.mem.zeroes([4]u32),
         };
         
@@ -339,7 +337,6 @@ pub const NvKmsInterface = struct {
             return switch (std.posix.errno(result)) {
                 .INVAL => NvKmsError.InvalidParameter,
                 .NODEV => NvKmsError.DeviceNotFound,
-                .NOTSUP => NvKmsError.NotSupported,
                 .NOMEM => NvKmsError.OutOfMemory,
                 else => NvKmsError.HardwareError,
             };
@@ -358,7 +355,7 @@ pub const NvKmsInterface = struct {
     ) !void {
         // Convert from our range (-50 to 100) to NVIDIA's range (-1024 to 1023)
         const nvidia_vibrance = std.math.clamp(
-            @as(i32, vibrance) * 1024 / 100,
+            @divTrunc(@as(i32, vibrance) * 1024, 100),
             -1024,
             1023,
         );
@@ -379,9 +376,9 @@ pub const NvKmsInterface = struct {
         const reply = try self.getDisplayAttribute(display_handle, .digital_vibrance);
         
         // Convert from NVIDIA's range to our range
-        const current = @as(i16, @intCast(reply.value * 100 / 1024));
-        const min = @as(i16, @intCast(reply.min_value * 100 / 1024));
-        const max = @as(i16, @intCast(reply.max_value * 100 / 1024));
+        const current = @as(i16, @intCast(@divTrunc(reply.value * 100, 1024)));
+        const min = @as(i16, @intCast(@divTrunc(reply.min_value * 100, 1024)));
+        const max = @as(i16, @intCast(@divTrunc(reply.max_value * 100, 1024)));
         
         return .{ .current = current, .min = min, .max = max };
     }
@@ -453,7 +450,7 @@ test "vibrance range conversion" {
     
     for (test_values) |test_case| {
         const nvidia_vibrance = std.math.clamp(
-            @as(i32, test_case.input) * 1024 / 100,
+            @divTrunc(@as(i32, test_case.input) * 1024, 100),
             -1024,
             1023,
         );

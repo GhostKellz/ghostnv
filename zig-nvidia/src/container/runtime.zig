@@ -185,7 +185,7 @@ pub const ContainerRuntime = struct {
     fn setup_gpu_devices(self: *ContainerRuntime, namespace: *ContainerNamespace, gpu_access: GpuAccess) !void {
         _ = namespace;
         
-        std.log.info("Setting up GPU access for container");
+        std.log.info("Setting up GPU access for container", .{});
         
         // Create device nodes in container
         for (gpu_access.device_ids) |device_id| {
@@ -328,7 +328,7 @@ pub const CGroupManager = struct {
             const limit_str = try std.fmt.allocPrint(self.allocator, "{}", .{memory_bytes});
             defer self.allocator.free(limit_str);
             
-            try std.fs.writeFileAbsolute(memory_limit_path, limit_str);
+            try std.fs.cwd().writeFile(memory_limit_path, limit_str);
         }
         
         // Set CPU limit

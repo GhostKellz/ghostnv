@@ -1,5 +1,301 @@
 const std = @import("std");
 const memory = @import("memory.zig");
+const Allocator = std.mem.Allocator;
+
+// Hardware constants
+const FIFO_REGS_OFFSET = 0x800000;
+const PFIFO_CACHE_OFFSET = 0x2000;
+const PUSHBUFFER_SIZE = 4096;
+const COMMAND_RING_SIZE = 1024;
+const MAX_COPY_ENGINES = 4;
+const COPY_ENGINE_BASE = 0x90000;
+const COPY_ENGINE_SIZE = 0x1000;
+const DMA_BUFFER_COUNT = 16;
+const DMA_BUFFER_SIZE = 65536;
+
+// FIFO interrupt flags
+const FIFO_INTR_DMA_PUSHER = 0x00000001;
+const FIFO_INTR_DMA_GET = 0x00000002;
+const FIFO_INTR_CACHE_ERROR = 0x00000004;
+const FIFO_INTR_RUNOUT = 0x00000008;
+
+// DMA control flags
+const DMA_CONTROL_ENABLE = 0x00000001;
+const DMA_CONTROL_BUSY = 0x00000002;
+const DMA_CONTROL_PAGE_TABLE_PRESENT = 0x00000004;
+const DMA_CONTROL_TARGET_MEMORY = 0x00000008;
+
+// Pusher control flags
+const PUSHER_CONTROL_ENABLE = 0x00000001;
+
+// Runout status
+const RUNOUT_STATUS_ACTIVE = 0x00000001;
+
+// Copy engine control
+const CE_CONTROL_ENABLE = 0x00000001;
+
+// Missing struct definitions
+const CommandStats = struct {
+    commands_submitted: u64 = 0,
+    interrupts_handled: u64 = 0,
+    fifo_resets: u64 = 0,
+    cache_errors: u64 = 0,
+    runout_events: u64 = 0,
+};
+
+const CopyEngineRegs = struct {
+    control: u32,
+    status: u32,
+};
+
+const CommandBatch = struct {
+    commands: []const GpuCommand,
+    fence_id: u64,
+    priority: CommandPriority,
+    timestamp: i64,
+};
+
+// Hardware register structures
+const FifoRegisters = struct {
+    control: u32,
+    status: u32,
+    put: u32,
+    get: u32,
+    ref_cnt: u32,
+    semaphore: u32,
+    acquire: u32,
+    grctx: u32,
+    intr_status: u32,
+    intr_enable: u32,
+    cache1_dma_control: u32,
+    cache1_pusher_control: u32,
+    cache1_dma_get: u32,
+    cache1_dma_put: u32,
+    cache1_dma_status: u32,
+    runout_status: u32,
+    
+    pub fn init() FifoRegisters {
+        return FifoRegisters{
+            .control = 0,
+            .status = 0,
+            .put = 0,
+            .get = 0,
+            .ref_cnt = 0,
+            .semaphore = 0,
+            .acquire = 0,
+            .grctx = 0,
+            .intr_status = 0,
+            .intr_enable = 0,
+            .cache1_dma_control = 0,
+            .cache1_pusher_control = 0,
+            .cache1_dma_get = 0,
+            .cache1_dma_put = 0,
+            .cache1_dma_status = 0,
+            .runout_status = 0,
+        };
+    }
+};
+
+const PfifoCache = struct {
+    push0: u32,
+    push1: u32,
+    pull0: u32,
+    pull1: u32,
+    hash: u32,
+    device: u32,
+    engine: u32,
+    
+    pub fn init() PfifoCache {
+        return PfifoCache{
+            .push0 = 0,
+            .push1 = 0,
+            .pull0 = 0,
+            .pull1 = 0,
+            .hash = 0,
+            .device = 0,
+            .engine = 0,
+        };
+    }
+};
+
+const PushBuffer = struct {
+    buffer: []u32,
+    put_pointer: u32,
+    get_pointer: u32,
+    size: u32,
+    
+    pub fn init(allocator: Allocator, size: u32) !PushBuffer {
+        return PushBuffer{
+            .buffer = try allocator.alloc(u32, size),
+            .put_pointer = 0,
+            .get_pointer = 0,
+            .size = size,
+        };
+    }
+    
+    pub fn deinit(self: *PushBuffer) void {
+        if (self.buffer.len > 0) {
+            std.heap.page_allocator.free(self.buffer);
+        }
+    }
+    
+    pub fn push(self: *PushBuffer, command: u32) !void {
+        if ((self.put_pointer + 1) % self.size == self.get_pointer) {
+            return error.BufferFull;
+        }
+        self.buffer[self.put_pointer] = command;
+        self.put_pointer = (self.put_pointer + 1) % self.size;
+    }
+    
+    pub fn pop(self: *PushBuffer) ?u32 {
+        if (self.get_pointer == self.put_pointer) {
+            return null;
+        }
+        const command = self.buffer[self.get_pointer];
+        self.get_pointer = (self.get_pointer + 1) % self.size;
+        return command;
+    }
+    
+    pub fn reset(self: *PushBuffer) void {
+        self.put_pointer = 0;
+        self.get_pointer = 0;
+    }
+    
+    pub fn updateGetPointer(self: *PushBuffer, new_get: u32) void {
+        self.get_pointer = new_get;
+    }
+    
+    pub fn expand(self: *PushBuffer) !void {
+        // Stub implementation for now
+        _ = self;
+        return error.NotImplemented;
+    }
+};
+
+const CommandRing = struct {
+    commands: []Command,
+    head: u32,
+    tail: u32,
+    size: u32,
+    
+    pub fn init(allocator: Allocator, size: u32) !CommandRing {
+        return CommandRing{
+            .commands = try allocator.alloc(Command, size),
+            .head = 0,
+            .tail = 0,
+            .size = size,
+        };
+    }
+    
+    pub fn deinit(self: *CommandRing) void {
+        if (self.commands.len > 0) {
+            std.heap.page_allocator.free(self.commands);
+        }
+    }
+    
+    pub fn updateProcessedPointer(self: *CommandRing, new_pos: u32) void {
+        self.head = new_pos;
+    }
+};
+
+const DmaBuffer = struct {
+    address: u64,
+    size: u64,
+    mapped: bool,
+    
+    pub fn init(allocator: Allocator, size: u64) !DmaBuffer {
+        _ = allocator;
+        return DmaBuffer{
+            .address = 0,
+            .size = size,
+            .mapped = false,
+        };
+    }
+};
+
+const FenceManager = struct {
+    fences: std.ArrayList(ManagedFence),
+    next_id: u32,
+    
+    const ManagedFence = struct {
+        id: u32,
+        signaled: bool,
+        value: u64,
+    };
+    
+    pub fn init(allocator: Allocator) FenceManager {
+        return FenceManager{
+            .fences = std.ArrayList(ManagedFence).init(allocator),
+            .next_id = 1,
+        };
+    }
+    
+    pub fn deinit(self: *FenceManager) void {
+        self.fences.deinit();
+    }
+    
+    pub fn create_fence(self: *FenceManager) !u32 {
+        const fence = ManagedFence{
+            .id = self.next_id,
+            .signaled = false,
+            .value = 0,
+        };
+        try self.fences.append(fence);
+        self.next_id += 1;
+        return fence.id;
+    }
+    
+    pub fn signal_fence(self: *FenceManager, fence_id: u32) !void {
+        for (self.fences.items) |*fence| {
+            if (fence.id == fence_id) {
+                fence.signaled = true;
+                return;
+            }
+        }
+        return error.FenceNotFound;
+    }
+    
+    pub fn checkCompletedFences(self: *FenceManager, current_pos: u32) void {
+        _ = self;
+        _ = current_pos;
+        // Stub implementation
+    }
+};
+
+const SemaphorePool = struct {
+    semaphores: std.ArrayList(Semaphore),
+    next_id: u32,
+    allocator: Allocator,
+    
+    const Semaphore = struct {
+        id: u32,
+        value: u32,
+        max_value: u32,
+    };
+    
+    pub fn init(allocator: Allocator) !SemaphorePool {
+        return SemaphorePool{
+            .semaphores = std.ArrayList(Semaphore).init(allocator),
+            .next_id = 1,
+            .allocator = allocator,
+        };
+    }
+    
+    pub fn deinit(self: *SemaphorePool) void {
+        self.semaphores.deinit();
+    }
+    
+    pub fn allocate(self: *SemaphorePool, max_value: u32) !u32 {
+        const semaphore = Semaphore{
+            .id = self.next_id,
+            .value = 0,
+            .max_value = max_value,
+        };
+        try self.semaphores.append(semaphore);
+        self.next_id += 1;
+        return semaphore.id;
+    }
+};
 
 /// GPU Command Submission and Processing Infrastructure
 /// Handles all GPU command execution, scheduling, and synchronization
@@ -29,7 +325,7 @@ pub const CommandProcessor = struct {
     pub fn init(allocator: std.mem.Allocator, bar0_mapping: ?*anyopaque) !*Self {
         if (bar0_mapping == null) return error.InvalidMapping;
         
-        var self = try allocator.create(Self);
+        const self = try allocator.create(Self);
         self.* = Self{
             .bar0 = @ptrCast(@alignCast(bar0_mapping.?)),
             .fifo_regs = @ptrCast(@alignCast(@as([*]u8, @ptrCast(bar0_mapping.?)) + FIFO_REGS_OFFSET)),
@@ -37,9 +333,9 @@ pub const CommandProcessor = struct {
             .pushbuffer = undefined,
             .command_ring = undefined,
             .dma_buffers = std.ArrayList(DmaBuffer).init(allocator),
-            .fence_manager = try FenceManager.init(allocator),
+            .fence_manager = FenceManager.init(allocator),
             .semaphore_pool = try SemaphorePool.init(allocator),
-            .scheduler = try CommandScheduler.init(allocator),
+            .scheduler = CommandScheduler.init(allocator, undefined),
             .stats = .{},
             .allocator = allocator,
         };
@@ -199,7 +495,7 @@ pub const CommandProcessor = struct {
         }
         
         // Initialize DMA buffers
-        for (0..DMA_BUFFER_COUNT) |i| {
+        for (0..DMA_BUFFER_COUNT) |_| {
             const buffer = try DmaBuffer.init(self.allocator, DMA_BUFFER_SIZE);
             try self.dma_buffers.append(buffer);
         }
@@ -207,7 +503,7 @@ pub const CommandProcessor = struct {
 
     fn handleDmaPusherInterrupt(self: *Self) void {
         const get_ptr = self.fifo_regs.cache1_dma_get;
-        const put_ptr = self.fifo_regs.cache1_dma_put;
+        _ = self.fifo_regs.cache1_dma_put;
         
         // Process completed commands
         self.pushbuffer.updateGetPointer(get_ptr);

@@ -244,7 +244,7 @@ pub const DockerShim = struct {
         const config_path = try std.fmt.allocPrint(self.allocator, "{s}/config.json", .{bundle_path});
         defer self.allocator.free(config_path);
         
-        const config_content = try std.fs.readFileAlloc(self.allocator, config_path, 1024 * 1024);
+        const config_content = try std.fs.cwd().readFileAlloc(self.allocator, config_path, 1024 * 1024);
         defer self.allocator.free(config_content);
         
         // Simple JSON parsing for demo - real implementation would use proper JSON parser
@@ -401,5 +401,11 @@ pub fn main() !void {
     var shim = DockerShim.init(allocator, &container_runtime);
     
     // Handle OCI command
-    try shim.handle_oci_command(args);
+    // Convert args to correct type
+    var converted_args = try allocator.alloc([]const u8, args.len);
+    defer allocator.free(converted_args);
+    for (args, 0..) |arg, i| {
+        converted_args[i] = arg;
+    }
+    try shim.handle_oci_command(converted_args);
 }

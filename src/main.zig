@@ -37,9 +37,23 @@ pub fn main() !void {
 
     switch (command) {
         .help => try print_help(),
-        .patch => try handle_patch(allocator, args[2..]),
+        .patch => {
+            var converted_args = try allocator.alloc([]const u8, args[2..].len);
+            defer allocator.free(converted_args);
+            for (args[2..], 0..) |arg, i| {
+                converted_args[i] = arg;
+            }
+            try handle_patch(allocator, converted_args);
+        },
         .validate => try handle_validate(allocator),
-        .build => try handle_build(allocator, args[2..]),
+        .build => {
+            var converted_args = try allocator.alloc([]const u8, args[2..].len);
+            defer allocator.free(converted_args);
+            for (args[2..], 0..) |arg, i| {
+                converted_args[i] = arg;
+            }
+            try handle_build(allocator, converted_args);
+        },
         .legacy => try handle_legacy(allocator),
         .realtime => try handle_realtime(allocator),
         .audio => try handle_audio(allocator),
@@ -51,33 +65,32 @@ pub fn main() !void {
 
 fn print_help() !void {
     print(
-        \\GhostNV - NVIDIA Open Driver Zig Integration
-        \\
-        \\Usage: ghostnv <command> [options]
-        \\
-        \\Commands:
-        \\  help                 Show this help message
-        \\  patch [--options]    Apply patches based on configuration
-        \\  validate             Validate patches and checksums
-        \\  build [mode]         Build kernel modules
-        \\  legacy               Build using legacy Makefile system
-        \\  realtime             Build with real-time optimizations
-        \\  audio                Build with RTX Voice/Audio enhancements
-        \\  version              Show driver version information
-        \\  clean                Clean build artifacts
-        \\
-        \\Patch Options:
-        \\  --performance        Apply performance patches
-        \\  --realtime           Apply real-time optimizations
-        \\  --audio              Apply RTX Voice/Audio patches
-        \\  --debug              Apply debug patches
-        \\
-        \\Examples:
-        \\  ghostnv patch --performance --realtime
-        \\  ghostnv build realtime
-        \\  ghostnv audio
-        \\
-    );
+        "GhostNV - NVIDIA Open Driver Zig Integration\n" ++
+        "\n" ++
+        "Usage: ghostnv <command> [options]\n" ++
+        "\n" ++
+        "Commands:\n" ++
+        "  help                 Show this help message\n" ++
+        "  patch [--options]    Apply patches based on configuration\n" ++
+        "  validate             Validate patches and checksums\n" ++
+        "  build [mode]         Build kernel modules\n" ++
+        "  legacy               Build using legacy Makefile system\n" ++
+        "  realtime             Build with real-time optimizations\n" ++
+        "  audio                Build with RTX Voice/Audio enhancements\n" ++
+        "  version              Show driver version information\n" ++
+        "  clean                Clean build artifacts\n" ++
+        "\n" ++
+        "Patch Options:\n" ++
+        "  --performance        Apply performance patches\n" ++
+        "  --realtime           Apply real-time optimizations\n" ++
+        "  --audio              Apply RTX Voice/Audio patches\n" ++
+        "  --debug              Apply debug patches\n" ++
+        "\n" ++
+        "Examples:\n" ++
+        "  ghostnv patch --performance --realtime\n" ++
+        "  ghostnv build realtime\n" ++
+        "  ghostnv audio\n" ++
+        "\n", .{});
 }
 
 fn handle_patch(allocator: std.mem.Allocator, args: [][]const u8) !void {
@@ -142,7 +155,7 @@ fn handle_build(allocator: std.mem.Allocator, args: [][]const u8) !void {
 
 fn handle_legacy(allocator: std.mem.Allocator) !void {
     const version = ghostnv.DriverVersion{ .major = 575, .minor = 0, .patch = 0 };
-    var patch_manager = ghostnv.PatchManager.init(allocator, "patches", version);
+    const patch_manager = ghostnv.PatchManager.init(allocator, "patches", version);
     var builder = ghostnv.KernelBuilder.init(allocator, .legacy, patch_manager);
     try builder.build();
 }
@@ -209,8 +222,8 @@ fn handle_generate_headers(allocator: std.mem.Allocator) !void {
     };
     
     // Read the header template from the scripts directory
-    const header_generator = @import("../scripts/generate_headers.zig");
-    _ = header_generator;
+    // const header_generator = @import("../scripts/generate_headers.zig");
+    // _ = header_generator;
     
     // Call the external script
     var child = std.process.Child.init(&.{"zig", "run", "scripts/generate_headers.zig", "--", "generate-headers"}, allocator);

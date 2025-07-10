@@ -228,8 +228,6 @@ pub const FrameGeneration = struct {
         _ = self;
         _ = prev_frame;
         _ = curr_frame;
-        _ = motion_vectors;
-        _ = t;
         
         // GPU compute shader for motion compensation:
         // 1. Sample previous frame at (x - mv.x * t, y - mv.y * t)
@@ -240,7 +238,6 @@ pub const FrameGeneration = struct {
     }
     
     fn detect_occlusions(self: *FrameGeneration, motion_vectors: MotionVectorField) ![]bool {
-        _ = self;
         
         const total_blocks = motion_vectors.vectors.len;
         var occlusion_mask = try std.heap.page_allocator.alloc(bool, total_blocks);
@@ -257,11 +254,9 @@ pub const FrameGeneration = struct {
     
     fn adaptive_blend(self: *FrameGeneration, prev_frame: u64, curr_frame: u64, output_frame: u64, 
                      motion_vectors: MotionVectorField, occlusion_mask: []const bool, t: f32) !void {
-        _ = self;
         _ = prev_frame;
         _ = curr_frame;
         _ = output_frame;
-        _ = motion_vectors;
         _ = t;
         
         // Confidence-weighted blending:
@@ -334,7 +329,6 @@ pub const MotionVectorField = struct {
     
     pub fn interpolate_vector(self: *const MotionVectorField, x: f32, y: f32) MotionVector {
         // Bilinear interpolation of motion vectors for sub-block accuracy
-        const blocks_x = (self.width + self.block_size - 1) / self.block_size;
         const block_x_f = x / @as(f32, @floatFromInt(self.block_size));
         const block_y_f = y / @as(f32, @floatFromInt(self.block_size));
         
@@ -372,8 +366,6 @@ pub const MotionVectorField = struct {
             .confidence = conf_interp,
         };
     }
-    
-    _ = blocks_x;
 };
 
 pub const MotionVector = struct {

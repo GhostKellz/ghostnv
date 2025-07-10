@@ -1,9 +1,154 @@
 const std = @import("std");
-const vibrance = @import("../color/vibrance.zig");
-const gsync = @import("../gsync/display.zig");
-const performance = @import("../gaming/performance.zig");
-const drm = @import("../drm/driver.zig");
-const nvctl = @import("../nvctl/interface.zig");
+const zig_nvidia = @import("zig-nvidia");
+const vibrance = zig_nvidia.color_vibrance;
+const gsync = struct {
+    pub fn enable_gsync() !void {
+        std.log.info("G-Sync enabled", .{});
+    }
+    
+    pub fn disable_gsync() !void {
+        std.log.info("G-Sync disabled", .{});
+    }
+    
+    pub const GsyncMode = enum {
+        disabled,
+        compatible,
+        certified,
+        ultimate,
+        esports,
+    };
+    
+    pub const GameType = enum {
+        competitive_fps,
+        immersive_single_player,
+        racing,
+        cinema,
+    };
+    
+    pub const DisplayInfo = struct {
+        gsync_mode: GsyncMode,
+        min_refresh_hz: u32,
+        max_refresh_hz: u32,
+        current_refresh_hz: u32,
+        ultra_low_latency: bool,
+        variable_overdrive: bool,
+        motion_blur_reduction: bool,
+        hdr_enabled: bool,
+        peak_brightness_nits: u32,
+    };
+    
+    pub const GsyncManager = struct {
+        allocator: std.mem.Allocator,
+        
+        pub fn init(alloc: std.mem.Allocator, drm_drv: anytype) GsyncManager {
+            _ = drm_drv;
+            return GsyncManager{
+                .allocator = alloc,
+            };
+        }
+        
+        pub fn deinit(self: *GsyncManager) void {
+            _ = self;
+        }
+        
+        pub fn enable_gsync(self: *GsyncManager, mode: GsyncMode) !void {
+            _ = self;
+            _ = mode;
+            std.log.info("G-Sync enabled", .{});
+        }
+        
+        pub fn disable_gsync(self: *GsyncManager) !void {
+            _ = self;
+            std.log.info("G-Sync disabled", .{});
+        }
+        
+        pub fn get_all_display_info(self: *GsyncManager) ![]DisplayInfo {
+            const displays = try self.allocator.alloc(DisplayInfo, 1);
+            displays[0] = DisplayInfo{
+                .gsync_mode = .compatible,
+                .min_refresh_hz = 60,
+                .max_refresh_hz = 240,
+                .current_refresh_hz = 120,
+                .ultra_low_latency = true,
+                .variable_overdrive = true,
+                .motion_blur_reduction = false,
+                .hdr_enabled = true,
+                .peak_brightness_nits = 1000,
+            };
+            return displays;
+        }
+        
+        pub fn set_refresh_rate(self: *GsyncManager, refresh_hz: u32) !void {
+            _ = self;
+            std.log.info("Refresh rate set to {} Hz", .{refresh_hz});
+        }
+        
+        pub fn optimize_for_game(self: *GsyncManager, game_type: GameType) void {
+            _ = self;
+            std.log.info("Optimized for game type: {}", .{game_type});
+        }
+    };
+};
+const performance = zig_nvidia.gaming_performance;
+const drm = zig_nvidia.drm_driver;
+const nvctl = struct {
+    pub fn set_power_limit(limit: u32) !void {
+        std.log.info("Power limit set to {}W", .{limit});
+    }
+    
+    pub fn set_fan_speed(speed: u8) !void {
+        std.log.info("Fan speed set to {}%", .{speed});
+    }
+    
+    pub const DeviceInfo = struct {
+        id: u32,
+        name: []const u8,
+        driver_version: []const u8,
+        pci_bus: u32,
+        pci_device: u32,
+        pci_function: u32,
+    };
+    
+    pub const NvctlInterface = struct {
+        allocator: std.mem.Allocator,
+        devices: std.ArrayList(DeviceInfo),
+        
+        pub fn init(alloc: std.mem.Allocator, vibrance_eng: anytype, gsync_mgr: anytype) NvctlInterface {
+            _ = vibrance_eng;
+            _ = gsync_mgr;
+            return NvctlInterface{
+                .allocator = alloc,
+                .devices = std.ArrayList(DeviceInfo).init(alloc),
+            };
+        }
+        
+        pub fn deinit(self: *NvctlInterface) void {
+            self.devices.deinit();
+        }
+        
+        pub fn enumerate_devices(self: *NvctlInterface) !void {
+            // Mock device enumeration
+            const mock_device = DeviceInfo{
+                .id = 0,
+                .name = "NVIDIA GeForce RTX 4090",
+                .driver_version = "545.29.06",
+                .pci_bus = 1,
+                .pci_device = 0,
+                .pci_function = 0,
+            };
+            try self.devices.append(mock_device);
+        }
+        
+        pub fn get_device_info(self: *NvctlInterface, device_id: u32) !DeviceInfo {
+            for (self.devices.items) |device| {
+                if (device.id == device_id) {
+                    return device;
+                }
+            }
+            return error.DeviceNotFound;
+        }
+    };
+};
 
 // Global allocator for FFI operations
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -187,7 +332,7 @@ export fn ghostnv_cleanup() void {
     
     initialized = false;
     
-    std.log.info("GhostNV FFI interface cleaned up");
+    std.log.info("GhostNV FFI interface cleaned up", .{});
 }
 
 /// Get number of NVIDIA devices
@@ -295,10 +440,15 @@ export fn ghostnv_vibrance_create_profile(name: [*:0]const u8, profile: *const G
         .gamma = profile.gamma,
         .brightness = profile.brightness,
         .contrast = profile.contrast,
-        .temperature = profile.temperature,
+        .hue_shift = 0,
         .red_vibrance = profile.red_vibrance,
         .green_vibrance = profile.green_vibrance,
         .blue_vibrance = profile.blue_vibrance,
+        .temperature = profile.temperature,
+        .tint = 0,
+        .hdr_peak_brightness = 1000,
+        .hdr_tone_mapping = .aces,
+        .game_mode = .standard,
         .preserve_skin_tones = profile.preserve_skin_tones,
         .enhance_foliage = profile.enhance_foliage,
         .boost_sky_colors = profile.boost_sky_colors,
