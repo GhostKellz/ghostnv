@@ -446,8 +446,6 @@ pub const WaylandCompositor = struct {
     }
     
     pub fn commitSurface(self: *Self, surface: *WaylandSurface) !void {
-        _ = self;
-        
         // Apply pending state
         if (surface.buffer) |buffer| {
             // Upload buffer to GPU

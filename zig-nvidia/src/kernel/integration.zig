@@ -263,16 +263,19 @@ pub const GhostKernelIntegration = struct {
     }
     
     fn initializeDisplaySubsystem(self: *Self) !void {
+        _ = self;
         std.log.info("Initializing display subsystem...");
         // Display engine is already initialized in init()
     }
     
     fn initializeVideoSubsystem(self: *Self) !void {
+        _ = self;
         std.log.info("Initializing video subsystem...");
         // Video processor is already initialized in init()
     }
     
     fn initializeAudioSubsystem(self: *Self) !void {
+        _ = self;
         std.log.info("Initializing audio subsystem...");
         // Audio engine is already initialized in init()
     }
@@ -304,26 +307,31 @@ pub const GhostKernelIntegration = struct {
     }
     
     fn shutdownAudioSubsystem(self: *Self) !void {
+        _ = self;
         std.log.info("Shutting down audio subsystem...");
         // Audio engine cleanup handled in deinit()
     }
     
     fn shutdownVideoSubsystem(self: *Self) !void {
+        _ = self;
         std.log.info("Shutting down video subsystem...");
         // Video processor cleanup handled in deinit()
     }
     
     fn shutdownDisplaySubsystem(self: *Self) !void {
+        _ = self;
         std.log.info("Shutting down display subsystem...");
         // Display engine cleanup handled in deinit()
     }
     
     fn shutdownCommandSubsystem(self: *Self) !void {
+        _ = self;
         std.log.info("Shutting down command subsystem...");
         // Command processor cleanup handled in deinit()
     }
     
     fn shutdownMemorySubsystem(self: *Self) !void {
+        _ = self;
         std.log.info("Shutting down memory subsystem...");
         // Memory manager cleanup handled in deinit()
     }

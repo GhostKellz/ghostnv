@@ -144,6 +144,7 @@ pub const RTXVoiceEngine = struct {
     }
     
     pub fn stopProcessing(self: *Self, input_stream: *AudioInputStream) !void {
+        _ = self;
         input_stream.state = .stopping;
         
         if (input_stream.processing_thread) |thread| {
@@ -747,7 +748,7 @@ pub const NeuralLayer = struct {
             switch (self.config.activation) {
                 .relu => output[i] = @max(0.0, output[i]),
                 .sigmoid => output[i] = 1.0 / (1.0 + @exp(-output[i])),
-                .tanh => output[i] = @tanh(output[i]),
+                .tanh => output[i] = std.math.tanh(output[i]),
                 .linear => {},
             }
         }
