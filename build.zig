@@ -13,6 +13,14 @@ pub fn build(b: *std.Build) void {
     const debug_mode = b.option(bool, "debug-driver", "Build with debug patches and symbols") orelse false;
     const pure_zig_mode = b.option(bool, "pure-zig", "Build pure Zig NVIDIA driver (experimental)") orelse false;
     
+    // Determine final build mode based on options
+    const final_driver_mode = if (driver_mode == .pure_zig or pure_zig_mode) 
+        "pure_zig" 
+    else if (driver_mode == .legacy_c or legacy_mode) 
+        "legacy_c" 
+    else 
+        "hybrid";
+    
     // New feature options
     const cuda_mode = b.option(bool, "cuda", "Enable CUDA compute support") orelse true;
     const nvenc_mode = b.option(bool, "nvenc", "Enable NVENC video encoding") orelse true;
@@ -20,11 +28,25 @@ pub fn build(b: *std.Build) void {
     const gaming_mode = b.option(bool, "gaming", "Enable gaming performance optimizations") orelse true;
     const frame_gen_mode = b.option(bool, "frame-gen", "Enable AI frame generation") orelse false;
 
+    // Add build options
+    const build_options = b.addOptions();
+    build_options.addOption([]const u8, "driver_mode", final_driver_mode);
+    build_options.addOption(bool, "patched_mode", patched_mode);
+    build_options.addOption(bool, "realtime_mode", realtime_mode);
+    build_options.addOption(bool, "audio_mode", audio_mode);
+    build_options.addOption(bool, "debug_mode", debug_mode);
+    build_options.addOption(bool, "cuda_mode", cuda_mode);
+    build_options.addOption(bool, "nvenc_mode", nvenc_mode);
+    build_options.addOption(bool, "vrr_mode", vrr_mode);
+    build_options.addOption(bool, "gaming_mode", gaming_mode);
+    build_options.addOption(bool, "frame_gen_mode", frame_gen_mode);
+
     // GhostNV module
     const ghostnv_mod = b.addModule("ghostnv", .{
         .root_source_file = b.path("zig/ghostnv.zig"),
         .target = target,
     });
+    ghostnv_mod.addOptions("build_options", build_options);
 
     // Main executable
     const exe = b.addExecutable(.{
@@ -272,8 +294,8 @@ pub fn build(b: *std.Build) void {
         }),
     });
     
-    // Set shared library version
-    ffi_lib.version = .{ .major = 1, .minor = 0, .patch = 0 };
+    // Set shared library version (commented out due to Zig 0.15 compatibility issue)
+    // ffi_lib.version = std.SemanticVersion{ .major = 1, .minor = 0, .patch = 0 };
     
     b.installArtifact(ffi_lib);
     
