@@ -122,7 +122,7 @@ fn handle_patch(allocator: std.mem.Allocator, args: [][]const u8) !void {
     try patch_types.append(.common);
 
     if (patch_types.items.len == 1) {
-        print("No specific patches requested, applying common patches only\n");
+        print("No specific patches requested, applying common patches only\n", .{});
     }
 
     try patch_manager.apply_patches(patch_types.items);
@@ -172,7 +172,7 @@ fn handle_realtime(allocator: std.mem.Allocator) !void {
 }
 
 fn handle_audio(allocator: std.mem.Allocator) !void {
-    print("Initializing PipeWire audio support\n");
+    print("Initializing PipeWire audio support\n", .{});
     
     var audio_manager = ghostnv.AudioManager.init(allocator);
     try audio_manager.enable_pipewire_integration();

@@ -102,9 +102,9 @@ pub const DockerShim = struct {
         
         // Start the container
         const executable = "/bin/bash"; // Default - should be from OCI spec
-        const exec_args = &[_][]const u8{executable};
+        var exec_args = [_][]const u8{executable};
         
-        try self.runtime.start_container(&handle, executable, exec_args);
+        try self.runtime.start_container(&handle, executable, &exec_args);
         
         std.log.info("Container {s} started successfully", .{container_id});
     }
@@ -303,14 +303,18 @@ pub const DockerShim = struct {
         , .{ handle.id, handle.namespace.id, handle.pid });
         defer self.allocator.free(handle_json);
         
-        try std.fs.writeFileAbsolute(state_path, handle_json);
+        const file = try std.fs.createFileAbsolute(state_path, .{});
+        defer file.close();
+        try file.writeAll(handle_json);
     }
     
     fn get_container_handle(self: *DockerShim, container_id: []const u8) !runtime.ContainerHandle {
         const state_path = try std.fmt.allocPrint(self.allocator, "/var/lib/ghostnv/containers/{s}.json", .{container_id});
         defer self.allocator.free(state_path);
         
-        const handle_json = try std.fs.readFileAlloc(self.allocator, state_path, 1024);
+        const file = try std.fs.openFileAbsolute(state_path, .{});
+        defer file.close();
+        const handle_json = try file.readToEndAlloc(self.allocator, 1024);
         defer self.allocator.free(handle_json);
         
         // Parse JSON (simplified - real implementation would use proper JSON parser)

@@ -164,7 +164,7 @@ pub const GhostKernelIntegration = struct {
         self.driver_state = .suspending;
         
         // Suspend all subsystems
-        try self.audio_engine.stopProcessing();
+        // Audio integration handles suspend in deinit if needed
         try self.video_processor.suspendProcessing();
         try self.display_engine.suspendDisplay();
         try self.cuda_runtime.suspendCompute();
@@ -186,7 +186,7 @@ pub const GhostKernelIntegration = struct {
         try self.cuda_runtime.resumeCompute();
         try self.display_engine.resumeDisplay();
         try self.video_processor.resumeProcessing();
-        try self.audio_engine.startProcessing();
+        // Audio integration handles resume automatically
         
         self.driver_state = .running;
         
@@ -224,7 +224,7 @@ pub const GhostKernelIntegration = struct {
             .gpu_utilization = self.cuda_runtime.getGpuUtilization(),
             .display_stats = self.display_engine.frame_stats,
             .video_stats = self.video_processor.stats,
-            .audio_stats = self.audio_engine.getPerformanceStats(),
+            .audio_stats = self.audio_integration.getPerformanceStats(),
             .uptime_seconds = self.getUptimeSeconds(),
         };
     }
@@ -279,7 +279,7 @@ pub const GhostKernelIntegration = struct {
         
         // Register HDMI and DisplayPort audio outputs for each display
         // This will be called when displays are detected
-        for (self.kernel_module.devices.items, 0..) |*device, i| {
+        for (0..self.kernel_module.devices.items.len) |i| {
             // Register HDMI outputs for this GPU
             try self.audio_integration.registerHDMIOutput(@intCast(i), .HDMI);
             

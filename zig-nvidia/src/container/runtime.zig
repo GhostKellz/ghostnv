@@ -217,7 +217,7 @@ pub const ContainerRuntime = struct {
         // - Mount /proc, /sys, /dev
         // - Setup hostname
         // - Configure networking
-        std.log.info("Setting up container environment");
+        std.log.info("Setting up container environment", .{});
     }
     
     fn set_gpu_environment_variables(self: *ContainerRuntime) !void {
@@ -236,7 +236,7 @@ pub const ContainerRuntime = struct {
         _ = security;
         
         // Apply seccomp, apparmor, SELinux policies
-        std.log.info("Applying security policies");
+        std.log.info("Applying security policies", .{});
     }
     
     fn cleanup_container_resources(self: *ContainerRuntime, handle: *ContainerHandle) !void {
@@ -328,7 +328,7 @@ pub const CGroupManager = struct {
             const limit_str = try std.fmt.allocPrint(self.allocator, "{}", .{memory_bytes});
             defer self.allocator.free(limit_str);
             
-            try std.fs.cwd().writeFile(memory_limit_path, limit_str);
+            try std.fs.cwd().writeFile(.{ .sub_path = memory_limit_path, .data = limit_str });
         }
         
         // Set CPU limit
@@ -340,7 +340,9 @@ pub const CGroupManager = struct {
             const cpu_str = try std.fmt.allocPrint(self.allocator, "{} 100000", .{cpu_quota});
             defer self.allocator.free(cpu_str);
             
-            try std.fs.writeFileAbsolute(cpu_max_path, cpu_str);
+            const file = try std.fs.createFileAbsolute(cpu_max_path, .{});
+            defer file.close();
+            try file.writeAll(cpu_str);
         }
         
         std.log.info("Set resource limits for container {}: {}MB RAM, {} CPU cores", .{ namespace_id, limits.memory_limit_mb, limits.cpu_cores });
@@ -511,8 +513,8 @@ pub const ContainerCLI = struct {
         var handle = try self.runtime.create_container(config);
         std.debug.print("Created container {s} with ID {}\n", .{ container_name, handle.id });
         
-        const exec_args = &[_][]const u8{command};
-        try self.runtime.start_container(&handle, image, exec_args);
+        var exec_args = [_][]const u8{command};
+        try self.runtime.start_container(&handle, image, &exec_args);
         
         std.debug.print("Started container {s}\n", .{container_name});
     }

@@ -293,7 +293,7 @@ export fn ghostnv_init() GhostNVResult {
     
     initialized = true;
     
-    std.log.info("GhostNV FFI interface initialized successfully");
+    std.log.info("GhostNV FFI interface initialized successfully", .{});
     return .GHOSTNV_OK;
 }
 

@@ -365,12 +365,8 @@ pub const AudioOutputInfo = struct {
 
 // Test functions
 test "pipewire integration initialization" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-    
     // Note: This test would require PipeWire to be running
     // In a real environment, you'd need proper PipeWire setup
     
-    std.log.info("PipeWire integration test - requires PipeWire daemon running");
+    std.log.info("PipeWire integration test - requires PipeWire daemon running", .{});
 }

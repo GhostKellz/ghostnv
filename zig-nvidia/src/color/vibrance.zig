@@ -448,7 +448,7 @@ pub const VibranceEngine = struct {
         try self.apply_to_hardware();
         
         self.active_profile = name;
-        self.processing_time_ns = std.time.nanoTimestamp() - start_time;
+        self.processing_time_ns = @intCast(std.time.nanoTimestamp() - start_time);
         
         std.log.info("Applied vibrance profile: {s} ({}ns)", .{ name, self.processing_time_ns });
     }
@@ -547,18 +547,18 @@ pub const VibranceEngine = struct {
             self.lut_blue[0..],
         );
         
-        std.log.debug("Applied NVIDIA hardware LUTs for digital vibrance");
+        std.log.debug("Applied NVIDIA hardware LUTs for digital vibrance", .{});
     }
     
     fn apply_drm_ctm(_: *VibranceEngine) !void {
         // Apply color transformation matrix via DRM
         // This would use the DRM Color Transformation Matrix property
-        std.log.debug("Applied DRM CTM for digital vibrance");
+        std.log.debug("Applied DRM CTM for digital vibrance", .{});
     }
     
     fn apply_software_processing(_: *VibranceEngine) !void {
         // Software-based processing - original implementation
-        std.log.debug("Applied software processing for digital vibrance");
+        std.log.debug("Applied software processing for digital vibrance", .{});
         
         // Simulate hardware programming delay
         std.time.sleep(1000000); // 1ms
@@ -582,7 +582,7 @@ pub const VibranceEngine = struct {
         try self.apply_to_hardware();
         self.active_profile = null;
         
-        std.log.info("Digital vibrance disabled");
+        std.log.info("Digital vibrance disabled", .{});
     }
     
     pub fn auto_detect_game_profile(self: *VibranceEngine, window_title: []const u8) ?[]const u8 {

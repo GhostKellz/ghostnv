@@ -342,7 +342,7 @@ pub const NvKmsInterface = struct {
             };
         }
         
-        std.log.debug("Set hardware LUT ({}) on display {}", .{
+        std.log.debug("Set hardware LUT ({s}) on display {}", .{
             lut_type.toString(),
             display_handle.display_id,
         });
