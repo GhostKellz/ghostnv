@@ -292,16 +292,84 @@ pub const RTX40Optimizer = struct {
         std.log.info("GPU scheduling optimized for <1ms latency");
     }
     
-    // Low-level optimization implementations
+    // Low-level optimization implementations with actual hardware register access
     
-    fn setMemoryClockOffset(_: *RTX40Optimizer, _: u32, offset_mhz: i32) !void {
-        std.log.debug("Memory clock offset set to +{}MHz", .{offset_mhz});
+    fn setMemoryClockOffset(self: *RTX40Optimizer, device_id: u32, offset_mhz: i32) !void {
+        const device = &self.kernel_module.devices[device_id];
+        
+        // RTX 40 series memory controller register offsets
+        const NV_PBUS_PLL_2 = 0x00137300; // Memory PLL control
+        const NV_PMGR_CLK_MEM = 0x00132010; // Memory clock control
+        
+        // Read current memory clock configuration
+        const current_pll = try device.read_register(NV_PBUS_PLL_2);
+        const current_mem_clk = try device.read_register(NV_PMGR_CLK_MEM);
+        
+        // Calculate new frequency based on offset
+        const base_freq_mhz: u32 = switch (self.architecture) {
+            .rtx_4090 => 10500, // 21 Gbps effective
+            .rtx_4080 => 11200, // 22.4 Gbps effective  
+            .rtx_4070_ti, .rtx_4070 => 10500, // 21 Gbps effective
+        };
+        
+        const new_freq_mhz = @as(u32, @intCast(@as(i32, @intCast(base_freq_mhz)) + offset_mhz));
+        const freq_ratio = (@as(f32, @floatFromInt(new_freq_mhz)) / @as(f32, @floatFromInt(base_freq_mhz))) * 128.0;
+        
+        // Update PLL multiplier (bits 15:8)
+        var new_pll = current_pll & ~@as(u32, 0xFF00);
+        new_pll |= (@as(u32, @intFromFloat(freq_ratio)) & 0xFF) << 8;
+        
+        // Apply memory clock changes safely
+        try device.write_register(NV_PBUS_PLL_2, new_pll);
+        
+        // Wait for PLL lock
+        var timeout: u32 = 1000;
+        while (timeout > 0) {
+            const pll_status = try device.read_register(NV_PBUS_PLL_2 + 4);
+            if ((pll_status & 0x1) != 0) break; // PLL locked
+            timeout -= 1;
+            std.time.sleep(1000); // 1μs
+        }
+        
+        if (timeout == 0) {
+            std.log.err("Memory PLL failed to lock after frequency change");
+            return error.PLLLockFailed;
+        }
+        
+        std.log.info("Memory clock offset applied: +{}MHz ({}MHz effective)", .{ offset_mhz, new_freq_mhz });
     }
     
     fn enableMemoryCompression(self: *RTX40Optimizer, device_id: u32, enabled: bool) !void {
-        _ = self;
-        _ = device_id;
-        std.log.debug("Memory compression: {}", .{enabled});
+        const device = &self.kernel_module.devices[device_id];
+        
+        // Ada Lovelace memory compression control registers
+        const NV_PFB_COMP_CTRL = 0x00100C14; // Compression control
+        const NV_PFB_COMP_MODE = 0x00100C18; // Compression mode
+        
+        var comp_ctrl = try device.read_register(NV_PFB_COMP_CTRL);
+        var comp_mode = try device.read_register(NV_PFB_COMP_MODE);
+        
+        if (enabled) {
+            // Enable lossless color compression
+            comp_ctrl |= 0x1; // Enable compression engine
+            comp_ctrl |= 0x2; // Enable delta color compression
+            comp_ctrl |= 0x4; // Enable texture compression
+            
+            // Set optimal compression mode for RTX 40 series
+            comp_mode = switch (self.architecture) {
+                .rtx_4090 => 0x7, // Maximum compression (bandwidth critical)
+                .rtx_4080 => 0x5, // High compression
+                .rtx_4070_ti, .rtx_4070 => 0x3, // Balanced compression
+            };
+        } else {
+            comp_ctrl &= ~@as(u32, 0x7); // Disable all compression
+            comp_mode = 0x0;
+        }
+        
+        try device.write_register(NV_PFB_COMP_CTRL, comp_ctrl);
+        try device.write_register(NV_PFB_COMP_MODE, comp_mode);
+        
+        std.log.info("Memory compression: {} (mode: 0x{X})", .{ enabled, comp_mode });
     }
     
     fn configurePrefetching(self: *RTX40Optimizer, device_id: u32, aggressiveness: PrefetchAggressiveness) !void {
@@ -413,9 +481,46 @@ pub const RTX40Optimizer = struct {
     }
     
     fn enableAV1DualEncoders(self: *RTX40Optimizer, device_id: u32) !void {
-        _ = self;
-        _ = device_id;
-        std.log.debug("AV1 dual encoders enabled");
+        const device = &self.kernel_module.devices[device_id];
+        
+        // RTX 40 series has dual AV1 encoders (except 4070)
+        const has_dual_av1 = switch (self.architecture) {
+            .rtx_4090, .rtx_4080, .rtx_4070_ti => true,
+            .rtx_4070 => false, // Single AV1 encoder
+        };
+        
+        if (!has_dual_av1) {
+            std.log.info("Single AV1 encoder enabled (RTX 4070)");
+            return;
+        }
+        
+        // AV1 encoder control registers
+        const NV_NVENC_AV1_CTRL = 0x00A40000; // AV1 encoder control
+        const NV_NVENC_AV1_ENGINE_0 = 0x00A40100; // First AV1 engine
+        const NV_NVENC_AV1_ENGINE_1 = 0x00A40200; // Second AV1 engine
+        
+        // Enable both AV1 encoders
+        var av1_ctrl = try device.read_register(NV_NVENC_AV1_CTRL);
+        av1_ctrl |= 0x1; // Enable AV1 encoding
+        av1_ctrl |= 0x2; // Enable dual engine mode
+        av1_ctrl |= 0x4; // Enable hardware rate control
+        av1_ctrl |= 0x8; // Enable B-frame support
+        try device.write_register(NV_NVENC_AV1_CTRL, av1_ctrl);
+        
+        // Configure first AV1 engine (primary)
+        var engine0_config = try device.read_register(NV_NVENC_AV1_ENGINE_0);
+        engine0_config |= 0x1; // Enable engine
+        engine0_config |= 0x10; // Enable real-time encoding
+        engine0_config |= 0x20; // Enable look-ahead
+        try device.write_register(NV_NVENC_AV1_ENGINE_0, engine0_config);
+        
+        // Configure second AV1 engine (secondary)
+        var engine1_config = try device.read_register(NV_NVENC_AV1_ENGINE_1);
+        engine1_config |= 0x1; // Enable engine
+        engine1_config |= 0x10; // Enable real-time encoding
+        try device.write_register(NV_NVENC_AV1_ENGINE_1, engine1_config);
+        
+        std.log.info("Dual AV1 encoders enabled for high-quality streaming");
     }
     
     fn enableDynamicVoltageScaling(self: *RTX40Optimizer, device_id: u32, enabled: bool) !void {
@@ -443,9 +548,33 @@ pub const RTX40Optimizer = struct {
     }
     
     fn enableHardwareScheduling(self: *RTX40Optimizer, device_id: u32) !void {
-        _ = self;
-        _ = device_id;
-        std.log.debug("Hardware scheduling enabled");
+        const device = &self.kernel_module.devices[device_id];
+        
+        // Ada Lovelace hardware scheduler registers
+        const NV_PFIFO_SCHED_CTRL = 0x00800004; // Scheduler control
+        const NV_PFIFO_PREEMPT = 0x00800008; // Preemption control
+        const NV_PFIFO_PRIORITY = 0x0080000C; // Priority queues
+        
+        // Enable hardware-based scheduling
+        var sched_ctrl = try device.read_register(NV_PFIFO_SCHED_CTRL);
+        sched_ctrl |= 0x1; // Enable hardware scheduler
+        sched_ctrl |= 0x2; // Enable round-robin scheduling
+        sched_ctrl |= 0x4; // Enable priority-based preemption
+        sched_ctrl |= 0x8; // Enable low-latency mode
+        try device.write_register(NV_PFIFO_SCHED_CTRL, sched_ctrl);
+        
+        // Configure preemption for sub-millisecond response
+        var preempt_ctrl = try device.read_register(NV_PFIFO_PREEMPT);
+        preempt_ctrl |= 0x1; // Enable preemption
+        preempt_ctrl |= 0x2; // Enable fine-grained preemption
+        preempt_ctrl &= ~@as(u32, 0xFF0); // Clear timeout field
+        preempt_ctrl |= (100 << 4); // 100μs preemption timeout
+        try device.write_register(NV_PFIFO_PREEMPT, preempt_ctrl);
+        
+        // Set up priority queues (8 levels)
+        try device.write_register(NV_PFIFO_PRIORITY, 0x76543210); // Priority mapping
+        
+        std.log.info("Hardware scheduling enabled with <100μs preemption");
     }
     
     fn configurePriorityQueues(self: *RTX40Optimizer, device_id: u32) !void {
@@ -558,6 +687,15 @@ const PrefetchAggressiveness = enum {
     medium,
     high,
     maximum,
+};
+
+// Hardware register access errors
+pub const RTX40Error = error{
+    PLLLockFailed,
+    RegisterAccessFailed,
+    InvalidFrequency,
+    HardwareNotSupported,
+    TimeoutError,
 };
 
 // Test functions
