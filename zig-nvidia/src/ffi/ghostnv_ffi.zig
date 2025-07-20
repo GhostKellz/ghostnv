@@ -80,12 +80,12 @@ const gsync = struct {
         
         pub fn set_refresh_rate(self: *GsyncManager, refresh_hz: u32) !void {
             _ = self;
-            std.log.info("Refresh rate set to {} Hz", .{refresh_hz});
+            std.log.info("Refresh rate set to {d} Hz", .{refresh_hz});
         }
         
         pub fn optimize_for_game(self: *GsyncManager, game_type: GameType) void {
             _ = self;
-            std.log.info("Optimized for game type: {}", .{game_type});
+            std.log.info("Optimized for game type: {any}", .{game_type});
         }
     };
 };
@@ -93,11 +93,11 @@ const performance = zig_nvidia.gaming_performance;
 const drm = zig_nvidia.drm_driver;
 const nvctl = struct {
     pub fn set_power_limit(limit: u32) !void {
-        std.log.info("Power limit set to {}W", .{limit});
+        std.log.info("Power limit set to {d}W", .{limit});
     }
     
     pub fn set_fan_speed(speed: u8) !void {
-        std.log.info("Fan speed set to {}%", .{speed});
+        std.log.info("Fan speed set to {d}%", .{speed});
     }
     
     pub const DeviceInfo = struct {
@@ -729,7 +729,7 @@ export fn ghostnv_performance_set_level(device_id: u32, level: u32) GhostNVResul
         return .GHOSTNV_ERROR_INVALID_VALUE;
     }
     
-    std.log.info("Setting performance level to {}", .{level});
+    std.log.info("Setting performance level to {d}", .{level});
     return .GHOSTNV_OK;
 }
 
@@ -745,7 +745,7 @@ export fn ghostnv_performance_set_frame_generation(device_id: u32, enabled: bool
         return .GHOSTNV_ERROR_INVALID_VALUE;
     }
     
-    std.log.info("Frame generation: enabled={}, max_frames={}", .{ enabled, max_frames });
+    std.log.info("Frame generation: enabled={}, max_frames={d}", .{ enabled, max_frames });
     return .GHOSTNV_OK;
 }
 

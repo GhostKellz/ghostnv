@@ -36,24 +36,24 @@ const CliArgs = struct {
     game_mode: ?vibrance.GameColorMode = null,
     auto_detect: bool = false,
     real_time: bool = false,
-    
+
     pub fn parse(_: std.mem.Allocator, args: [][]const u8) !CliArgs {
         if (args.len < 2) {
             return CliArgs{ .command = .help };
         }
-        
+
         const command_str = args[1];
         const command = std.meta.stringToEnum(Command, command_str) orelse {
             print("Unknown command: {s}\n", .{command_str});
             return CliArgs{ .command = .help };
         };
-        
+
         var cli_args = CliArgs{ .command = command };
-        
+
         var i: usize = 2;
         while (i < args.len) {
             const arg = args[i];
-            
+
             if (std.mem.eql(u8, arg, "--profile") and i + 1 < args.len) {
                 cli_args.profile_name = args[i + 1];
                 i += 2;
@@ -88,7 +88,7 @@ const CliArgs = struct {
                 i += 1;
             }
         }
-        
+
         return cli_args;
     }
 };
@@ -149,30 +149,29 @@ fn initialize_vibrance_engine(allocator: std.mem.Allocator) !vibrance.VibranceEn
     // Initialize DRM driver
     var drm_driver = try drm.DrmDriver.init(allocator);
     try drm_driver.register();
-    
+
     // Initialize vibrance engine
-    var engine = vibrance.VibranceEngine.init(allocator, &drm_driver);
+    var engine = vibrance.VibranceEngine.init(allocator, @ptrCast(&drm_driver));
     try engine.load_default_profiles();
-    
+
     return engine;
 }
 
 fn handle_list_command(engine: *vibrance.VibranceEngine) !void {
     const profiles = try engine.list_profiles();
     defer engine.allocator.free(profiles);
-    
+
     print("📋 Available Vibrance Profiles:\n", .{});
     print("═══════════════════════════════\n", .{});
-    
+
     for (profiles) |profile_name| {
         if (engine.profiles.get(profile_name)) |profile| {
             const active_marker = if (engine.active_profile != null and std.mem.eql(u8, engine.active_profile.?, profile_name)) " 🔥 ACTIVE" else "";
-            print("  {s:<20} | Vibrance: {:3} | Mode: {s}{s}\n", 
-                  .{ profile_name, profile.vibrance, profile.game_mode.toString(), active_marker });
+            print("  {s:<20} | Vibrance: {d:3} | Mode: {s}{s}\n", .{ profile_name, profile.vibrance, profile.game_mode.toString(), active_marker });
         }
     }
-    
-    print("\nTotal profiles: {}\n", .{profiles.len});
+
+    print("\nTotal profiles: {d}\n", .{profiles.len});
 }
 
 fn handle_apply_command(engine: *vibrance.VibranceEngine, profile_name: []const u8) !void {
@@ -183,7 +182,7 @@ fn handle_apply_command(engine: *vibrance.VibranceEngine, profile_name: []const 
         },
         else => return err,
     };
-    
+
     const stats = engine.get_performance_stats();
     print("✅ Applied profile '{s}' successfully!\n", .{profile_name});
     print("   Processing time: {:.2}ms\n", .{@as(f64, @floatFromInt(stats.processing_time_ns)) / 1_000_000.0});
@@ -194,9 +193,9 @@ fn handle_create_command(engine: *vibrance.VibranceEngine, args: CliArgs) !void 
         print("❌ Profile name required for create command\n", .{});
         return CliError.InvalidArgument;
     };
-    
+
     var profile = vibrance.VibranceProfile.init(profile_name);
-    
+
     // Apply command line options
     if (args.vibrance) |v| profile.vibrance = v;
     if (args.saturation) |s| profile.saturation = s;
@@ -205,16 +204,16 @@ fn handle_create_command(engine: *vibrance.VibranceEngine, args: CliArgs) !void 
     if (args.contrast) |c| profile.contrast = c;
     if (args.temperature) |t| profile.temperature = t;
     if (args.game_mode) |gm| profile.game_mode = gm;
-    
+
     try engine.create_profile(profile_name, profile);
     print("✅ Created profile '{s}' with:\n", .{profile_name});
-    print("   Vibrance: {}, Saturation: {}, Gamma: {:.1}\n", .{ profile.vibrance, profile.saturation, profile.gamma });
+    print("   Vibrance: {d}, Saturation: {d}, Gamma: {:.1}\n", .{ profile.vibrance, profile.saturation, profile.gamma });
     print("   Game Mode: {s}\n", .{profile.game_mode.toString()});
 }
 
 fn handle_auto_command(engine: *vibrance.VibranceEngine) !void {
     print("🔍 Auto-detecting active application...\n", .{});
-    
+
     // In a real implementation, this would scan active windows
     // For now, simulate with common game window titles
     const test_titles = [_][]const u8{
@@ -224,7 +223,7 @@ fn handle_auto_command(engine: *vibrance.VibranceEngine) !void {
         "Fortnite",
         "Unknown Game",
     };
-    
+
     for (test_titles) |title| {
         if (engine.auto_detect_game_profile(title)) |detected_profile| {
             print("🎮 Detected: {s}\n", .{title});
@@ -232,7 +231,7 @@ fn handle_auto_command(engine: *vibrance.VibranceEngine) !void {
             return;
         }
     }
-    
+
     print("ℹ️ No recognized game detected. Using 'Gaming' profile as fallback.\n", .{});
     try handle_apply_command(engine, "Gaming");
 }
@@ -242,55 +241,55 @@ fn handle_adjust_command(engine: *vibrance.VibranceEngine, adjustment_str: []con
         print("❌ Invalid adjustment value. Use -50 to +100.\n", .{});
         return CliError.InvalidArgument;
     };
-    
+
     if (engine.active_profile == null) {
         print("❌ No active profile. Apply a profile first.\n", .{});
         return;
     }
-    
+
     try engine.real_time_adjust(adjustment);
-    
+
     if (engine.get_active_profile()) |profile| {
-        print("🎛️ Adjusted vibrance to {} ({}{})\n", .{ profile.vibrance, if (adjustment >= 0) "+" else "", adjustment });
+        print("🎛️ Adjusted vibrance to {d} ({s}{d})\n", .{ profile.vibrance, if (adjustment >= 0) "+" else "", adjustment });
     }
 }
 
 fn handle_status_command(engine: *vibrance.VibranceEngine) !void {
     print("📊 GhostVibrance Status\n", .{});
     print("═══════════════════════\n", .{});
-    
+
     const stats = engine.get_performance_stats();
-    
+
     if (stats.active_profile) |profile_name| {
         if (engine.get_active_profile()) |profile| {
             print("🔥 Active Profile: {s}\n", .{profile_name});
-            print("   Vibrance: {}\n", .{profile.vibrance});
-            print("   Saturation: {}\n", .{profile.saturation});
+            print("   Vibrance: {d}\n", .{profile.vibrance});
+            print("   Saturation: {d}\n", .{profile.saturation});
             print("   Gamma: {:.1}\n", .{profile.gamma});
             print("   Game Mode: {s}\n", .{profile.game_mode.toString()});
-            print("   HDR: {s}\n", .{if (profile.hdr_enabled) "Enabled" else "Disabled"});
+            print("   HDR Peak: {d} nits\n", .{profile.hdr_peak_brightness});
         }
     } else {
         print("💤 No active profile (Digital vibrance disabled)\n", .{});
     }
-    
+
     print("\n📈 Performance:\n", .{});
     print("   Last processing time: {:.2}ms\n", .{@as(f64, @floatFromInt(stats.processing_time_ns)) / 1_000_000.0});
-    print("   Profiles loaded: {}\n", .{stats.profiles_loaded});
-    print("   Frames processed: {}\n", .{stats.frames_processed});
+    print("   Profiles loaded: {d}\n", .{stats.profiles_loaded});
+    print("   Frames processed: {d}\n", .{stats.frames_processed});
 }
 
 fn handle_monitor_command(engine: *vibrance.VibranceEngine, auto_detect: bool) !void {
-    print("👁️ Starting GhostVibrance monitor (Press Ctrl+C to stop)\n");
+    print("👁️ Starting GhostVibrance monitor (Press Ctrl+C to stop)\n", .{});
     print("   Auto-detection: {s}\n", .{if (auto_detect) "Enabled" else "Disabled"});
-    
+
     var last_window_title: [256]u8 = std.mem.zeroes([256]u8);
-    
+
     while (true) {
         // Simulate window title detection
         // In real implementation, would use X11/Wayland APIs
         const current_title = "Counter-Strike 2"; // Simulated
-        
+
         if (!std.mem.eql(u8, current_title, last_window_title[0..current_title.len])) {
             if (auto_detect) {
                 if (engine.auto_detect_game_profile(current_title)) |profile| {
@@ -298,10 +297,10 @@ fn handle_monitor_command(engine: *vibrance.VibranceEngine, auto_detect: bool) !
                     try engine.apply_profile(profile);
                 }
             }
-            
+
             @memcpy(last_window_title[0..current_title.len], current_title);
         }
-        
+
         // Sleep for 1 second
         std.time.sleep(1 * std.time.ns_per_s);
     }
@@ -311,12 +310,12 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
-    
+
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
-    
+
     const cli_args = try CliArgs.parse(allocator, @as([][]const u8, @ptrCast(args)));
-    
+
     switch (cli_args.command) {
         .help => {
             print_help();
@@ -324,22 +323,14 @@ pub fn main() !void {
         },
         else => {},
     }
-    
+
     // Initialize vibrance engine for all other commands
     var engine = initialize_vibrance_engine(allocator) catch |err| {
-        switch (err) {
-            drm.DrmError.RegistrationFailed => {
-                print("❌ Failed to initialize display driver. Run as root or check permissions.\n", .{});
-                return CliError.PermissionDenied;
-            },
-            else => {
-                print("❌ Hardware initialization failed: {}\n", .{err});
-                return CliError.HardwareNotSupported;
-            },
-        }
+        print("❌ Hardware initialization failed: {any}\n", .{err});
+        return CliError.HardwareNotSupported;
     };
     defer engine.deinit();
-    
+
     switch (cli_args.command) {
         .list => try handle_list_command(&engine),
         .apply => {
@@ -382,10 +373,10 @@ pub fn main() !void {
 // Simplified test runner for the CLI tool
 test "cli argument parsing" {
     const allocator = std.testing.allocator;
-    
+
     const args = [_][]const u8{ "ghostvibrance", "create", "TestProfile", "--vibrance", "50", "--saturation", "20" };
     const cli_args = try CliArgs.parse(allocator, &args);
-    
+
     try std.testing.expect(cli_args.command == .create);
     try std.testing.expect(std.mem.eql(u8, cli_args.profile_name.?, "TestProfile"));
     try std.testing.expect(cli_args.vibrance.? == 50);

@@ -150,7 +150,7 @@ pub const DockerShim = struct {
             return;
         };
         
-        const stats = try self.runtime.get_container_stats(&handle);
+        const stats = try self.runtime.get_container_stats(@constCast(&handle));
         
         const state = OCIState{
             .oci_version = "1.0.0",

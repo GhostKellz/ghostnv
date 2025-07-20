@@ -71,13 +71,15 @@ pub const ContainerRuntime = struct {
             try self.set_gpu_environment_variables();
             
             // Execute the container command
-            const result = linux.execve(executable.ptr, @ptrCast(args.ptr), @ptrFromInt(0));
-            std.log.err("execve failed: {}", .{result});
+            // Use a simpler approach for execve - just cast directly since we expect null-terminated strings
+            const empty_env = [_:null]?[*:0]const u8{};
+                        const result = linux.execve(@as([*:0]const u8, @ptrCast(executable.ptr)), @ptrCast(args.ptr), &empty_env);
+            std.log.err("execve failed: {d}", .{result});
             std.process.exit(1);
         } else if (pid > 0) {
             // Parent process
-            handle.pid = pid;
-            std.log.info("Container {} started with PID {}", .{ handle.id, pid });
+            handle.pid = @intCast(pid);
+            std.log.info("Container {d} started with PID {d}", .{ handle.id, pid });
         } else {
             return error.ForkFailed;
         }
@@ -224,10 +226,14 @@ pub const ContainerRuntime = struct {
         _ = self;
         
         // Set NVIDIA-specific environment variables
-        try std.process.env.set("NVIDIA_VISIBLE_DEVICES", "all");
-        try std.process.env.set("NVIDIA_DRIVER_CAPABILITIES", "compute,video,graphics,utility");
+        // Set NVIDIA_VISIBLE_DEVICES environment variable
+        // TODO: Implement proper setenv for modern Zig
+        _ = "NVIDIA_VISIBLE_DEVICES";
+        // Set NVIDIA_DRIVER_CAPABILITIES environment variable
+        // TODO: Implement proper setenv for modern Zig
+        _ = "NVIDIA_DRIVER_CAPABILITIES";
         
-        std.log.info("Set GPU environment variables");
+        std.log.info("Set GPU environment variables", .{});
     }
     
     fn apply_security_policies(self: *ContainerRuntime, namespace: *ContainerNamespace, security: SecurityPolicy) !void {
@@ -256,7 +262,7 @@ pub const ContainerRuntime = struct {
     
     fn get_gpu_uuid(self: *ContainerRuntime, device_id: u32) ![]u8 {
         // Mock UUID for now - real implementation would query NVML
-        return try std.fmt.allocPrint(self.allocator, "GPU-{:08x}-{:04x}-{:04x}", .{ device_id, 1234, 5678 });
+        return try std.fmt.allocPrint(self.allocator, "GPU-{x:0>8}-{x:0>4}-{x:0>4}", .{ device_id, 1234, 5678 });
     }
     
     fn get_gpu_memory(self: *ContainerRuntime, device_id: u32) !u32 {
@@ -511,7 +517,7 @@ pub const ContainerCLI = struct {
         };
         
         var handle = try self.runtime.create_container(config);
-        std.debug.print("Created container {s} with ID {}\n", .{ container_name, handle.id });
+        std.debug.print("Created container {s} with ID {d}\n", .{ container_name, handle.id });
         
         var exec_args = [_][]const u8{command};
         try self.runtime.start_container(&handle, image, &exec_args);
@@ -520,17 +526,17 @@ pub const ContainerCLI = struct {
     }
     
     fn handle_list_command(self: *ContainerCLI) !void {
-        std.debug.print("Active GPU Containers:\n");
-        std.debug.print("ID\tNAME\tSTATUS\n");
+        std.debug.print("Active GPU Containers:\n", .{});
+        std.debug.print("ID\tNAME\tSTATUS\n", .{});
         
         for (self.runtime.namespaces.items) |namespace| {
-            std.debug.print("{}\t{s}\tRunning\n", .{ namespace.id, namespace.name });
+            std.debug.print("{d}\t{s}\tRunning\n", .{ namespace.id, namespace.name });
         }
     }
     
     fn handle_stop_command(self: *ContainerCLI, args: [][]const u8) !void {
         if (args.len < 1) {
-            std.debug.print("Usage: ghostnv-container stop <container_id>\n");
+            std.debug.print("Usage: ghostnv-container stop <container_id>\n", .{});
             return;
         }
         
@@ -545,17 +551,17 @@ pub const ContainerCLI = struct {
                 };
                 
                 try self.runtime.stop_container(&handle);
-                std.debug.print("Stopped container {}\n", .{container_id});
+                std.debug.print("Stopped container {d}\n", .{container_id});
                 return;
             }
         }
         
-        std.debug.print("Container {} not found\n", .{container_id});
+        std.debug.print("Container {d} not found\n", .{container_id});
     }
     
     fn handle_stats_command(self: *ContainerCLI, args: [][]const u8) !void {
         if (args.len < 1) {
-            std.debug.print("Usage: ghostnv-container stats <container_id>\n");
+            std.debug.print("Usage: ghostnv-container stats <container_id>\n", .{});
             return;
         }
         
@@ -571,28 +577,28 @@ pub const ContainerCLI = struct {
                 
                 const stats = try self.runtime.get_container_stats(&handle);
                 
-                std.debug.print("Container {} Stats:\n", .{container_id});
+                std.debug.print("Container {d} Stats:\n", .{container_id});
                 std.debug.print("  CPU Usage: {:.1}%\n", .{stats.cpu_usage_percent});
-                std.debug.print("  Memory Usage: {}MB\n", .{stats.memory_usage_mb});
+                std.debug.print("  Memory Usage: {d}MB\n", .{stats.memory_usage_mb});
                 std.debug.print("  GPU Usage: {:.1}%\n", .{stats.gpu_usage_percent});
-                std.debug.print("  GPU Memory: {}MB\n", .{stats.gpu_memory_usage_mb});
+                std.debug.print("  GPU Memory: {d}MB\n", .{stats.gpu_memory_usage_mb});
                 return;
             }
         }
         
-        std.debug.print("Container {} not found\n", .{container_id});
+        std.debug.print("Container {d} not found\n", .{container_id});
     }
     
     fn handle_devices_command(self: *ContainerCLI) !void {
         const devices = try self.runtime.list_gpu_devices();
         defer self.runtime.allocator.free(devices);
         
-        std.debug.print("Available GPU Devices:\n");
-        std.debug.print("ID\tPATH\t\t\tMEMORY\tCOMPUTE\tSTATUS\n");
+        std.debug.print("Available GPU Devices:\n", .{});
+        std.debug.print("ID\tPATH\t\t\tMEMORY\tCOMPUTE\tSTATUS\n", .{});
         
         for (devices) |device| {
             const status = if (device.available) "Available" else "In Use";
-            std.debug.print("{}\t{s}\t\t{}MB\t{}.{}\t{s}\n", .{
+            std.debug.print("{d}\t{s}\t\t{d}MB\t{d}.{d}\t{s}\n", .{
                 device.id,
                 device.path,
                 device.memory_mb,

@@ -189,7 +189,7 @@ fn handle_audio(allocator: std.mem.Allocator) !void {
 }
 
 fn handle_version(allocator: std.mem.Allocator) !void {
-    print("GhostNV - NVIDIA Open Driver Zig Integration\n");
+    print("GhostNV - NVIDIA Open Driver Zig Integration\n", .{});
     print("Zig Version: {s}\n", .{@import("builtin").zig_version_string});
     
     const version = ghostnv.DriverVersion{ .major = 575, .minor = 0, .patch = 0 };
@@ -204,15 +204,15 @@ fn handle_version(allocator: std.mem.Allocator) !void {
 
 fn handle_clean(allocator: std.mem.Allocator) !void {
     _ = allocator;
-    print("Cleaning build artifacts\n");
+    print("Cleaning build artifacts\n", .{});
     
     // This would typically call make clean or remove specific directories
-    print("Clean operation would be implemented here\n");
-    print("For now, run: make clean\n");
+    print("Clean operation would be implemented here\n", .{});
+    print("For now, run: make clean\n", .{});
 }
 
 fn handle_generate_headers(allocator: std.mem.Allocator) !void {
-    print("Generating C FFI headers...\n");
+    print("Generating C FFI headers...\n", .{});
     
     // Create output directory
     std.fs.cwd().makePath("zig-out/include") catch |err| {
@@ -227,27 +227,27 @@ fn handle_generate_headers(allocator: std.mem.Allocator) !void {
     
     // Call the external script
     var child = std.process.Child.init(&.{"zig", "run", "scripts/generate_headers.zig", "--", "generate-headers"}, allocator);
-    child.cwd = std.fs.cwd();
+    child.cwd = ".";
     
     const result = child.spawnAndWait() catch {
-        print("Error: Failed to run header generator script\n");
-        print("Run manually: zig run scripts/generate_headers.zig -- generate-headers\n");
+        print("Error: Failed to run header generator script\n", .{});
+        print("Run manually: zig run scripts/generate_headers.zig -- generate-headers\n", .{});
         return;
     };
     
     switch (result) {
         .Exited => |code| {
             if (code == 0) {
-                print("FFI headers generated successfully!\n");
-                print("Files created:\n");
-                print("  - zig-out/include/ghostnv_ffi.h\n");
-                print("  - zig-out/ghostnv.pc\n");
+                print("FFI headers generated successfully!\n", .{});
+                print("Files created:\n", .{});
+                print("  - zig-out/include/ghostnv_ffi.h\n", .{});
+                print("  - zig-out/ghostnv.pc\n", .{});
             } else {
                 print("Header generation failed with exit code: {}\n", .{code});
             }
         },
         else => {
-            print("Header generation process terminated unexpectedly\n");
+            print("Header generation process terminated unexpectedly\n", .{});
         },
     }
 }

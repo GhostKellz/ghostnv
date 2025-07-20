@@ -65,6 +65,10 @@ pub const DriverVersion = struct {
     major: u32,
     minor: u32,
     patch: u32,
+    
+    pub fn to_string(self: DriverVersion, allocator: std.mem.Allocator) ![]u8 {
+        return std.fmt.allocPrint(allocator, "{d}.{d}.{d}", .{ self.major, self.minor, self.patch });
+    }
 };
 
 // Patch type enumeration

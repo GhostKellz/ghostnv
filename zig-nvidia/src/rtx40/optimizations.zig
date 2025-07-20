@@ -303,7 +303,7 @@ pub const RTX40Optimizer = struct {
         
         // Read current memory clock configuration
         const current_pll = try device.read_register(NV_PBUS_PLL_2);
-        const current_mem_clk = try device.read_register(NV_PMGR_CLK_MEM);
+        _ = try device.read_register(NV_PMGR_CLK_MEM);
         
         // Calculate new frequency based on offset
         const base_freq_mhz: u32 = switch (self.architecture) {

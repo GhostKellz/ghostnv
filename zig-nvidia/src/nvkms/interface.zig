@@ -255,7 +255,7 @@ pub const NvKmsInterface = struct {
             };
         }
         
-        std.log.debug("Set display attribute {} to {} on display {}", .{
+        std.log.debug("Set display attribute {s} to {any} on display {d}", .{
             attribute.toString(),
             value,
             display_handle.display_id,
