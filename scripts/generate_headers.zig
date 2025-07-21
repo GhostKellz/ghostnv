@@ -205,7 +205,7 @@ pub fn main() !void {
     // Write header file
     try std.fs.cwd().writeFile(.{ .sub_path = "zig-out/include/ghostnv_ffi.h", .data = HEADER_CONTENT });
     
-    std.debug.print("Generated C header: zig-out/include/ghostnv_ffi.h\n");
+    std.debug.print("Generated C header: zig-out/include/ghostnv_ffi.h\n", .{});
     
     // Also create a pkg-config file for easier integration
     const pkg_config_content = try std.fmt.allocPrint(allocator,
@@ -225,10 +225,10 @@ pub fn main() !void {
     
     try std.fs.cwd().writeFile(.{ .sub_path = "zig-out/ghostnv.pc", .data = pkg_config_content });
     
-    std.debug.print("Generated pkg-config: zig-out/ghostnv.pc\n");
-    std.debug.print("To install:\n");
-    std.debug.print("  sudo cp zig-out/lib/libghostnv.so /usr/local/lib/\n");
-    std.debug.print("  sudo cp zig-out/include/ghostnv_ffi.h /usr/local/include/\n");
-    std.debug.print("  sudo cp zig-out/ghostnv.pc /usr/local/lib/pkgconfig/\n");
-    std.debug.print("  sudo ldconfig\n");
+    std.debug.print("Generated pkg-config: zig-out/ghostnv.pc\n", .{});
+    std.debug.print("To install:\n", .{});
+    std.debug.print("  sudo cp zig-out/lib/libghostnv.so /usr/local/lib/\n", .{});
+    std.debug.print("  sudo cp zig-out/include/ghostnv_ffi.h /usr/local/include/\n", .{});
+    std.debug.print("  sudo cp zig-out/ghostnv.pc /usr/local/lib/pkgconfig/\n", .{});
+    std.debug.print("  sudo ldconfig\n", .{});
 }

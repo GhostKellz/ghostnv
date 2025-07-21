@@ -155,14 +155,14 @@ fn benchmark_cuda_runtime(allocator: std.mem.Allocator) !BenchmarkResult {
     var scheduler = try command.CommandScheduler.init(allocator, &memory_manager);
     defer scheduler.deinit();
     
-    var runtime = cuda.CudaRuntime.init(allocator, &scheduler);
+    var runtime = try cuda.CudaRuntime.init(allocator, &memory_manager);
     defer runtime.deinit();
     
     const start_time = time.nanoTimestamp();
     
-    try runtime.initialize();
+    // runtime.initialize() is not needed - init() handles initialization
     
-    const device_count = runtime.get_device_count();
+    const device_count = runtime.getDeviceCount();
     if (device_count == 0) {
         return BenchmarkResult{
             .name = "CUDA Runtime",
@@ -173,16 +173,16 @@ fn benchmark_cuda_runtime(allocator: std.mem.Allocator) !BenchmarkResult {
         };
     }
     
-    const context_id = try runtime.create_context(0, 0);
-    const context = runtime.get_context(context_id).?;
+    // Set the current device
+    try runtime.setDevice(0);
     
     // Test memory operations
-    const ptr = try context.malloc(1024 * 1024);
-    try context.free(ptr);
+    const ptr = try runtime.malloc(1024 * 1024);
+    try runtime.free(ptr);
     
     // Test stream creation
-    const stream_id = try context.create_stream(0, 0);
-    try context.destroy_stream(stream_id);
+    const stream = try runtime.stream_manager.createStream();
+    defer stream.deinit();
     
     const end_time = time.nanoTimestamp();
     const duration = end_time - start_time;

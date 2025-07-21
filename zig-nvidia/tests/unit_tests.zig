@@ -4,11 +4,11 @@ const expectEqual = testing.expectEqual;
 const expect = testing.expect;
 
 // Import modules to test
-const vibrance = @import("../src/color/vibrance.zig");
-const gsync = @import("../src/gsync/display.zig");
-const kernel = @import("../src/kernel/module.zig");
-const rtx40 = @import("../src/rtx40/optimizations.zig");
-const container = @import("../src/container/runtime.zig");
+const ghostnv = @import("zig-nvidia");
+const vibrance = ghostnv.color_vibrance;
+const gaming = ghostnv.gaming_performance;
+const container = ghostnv.container_runtime;
+const cuda = ghostnv.cuda_runtime;
 
 // =============================================================================
 // Digital Vibrance Unit Tests
@@ -147,7 +147,7 @@ test "gsync refresh rate calculations" {
 }
 
 test "gsync low framerate compensation" {
-    var config = gsync.GsyncConfig.init(.gsync_ultimate, 48, 144);
+    const config = gsync.GsyncConfig.init(.gsync_ultimate, 48, 144);
     
     // LFC should be enabled for displays with min refresh < 48Hz
     try expect(config.low_framerate_compensation == false); // min is 48

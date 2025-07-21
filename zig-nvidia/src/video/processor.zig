@@ -92,7 +92,7 @@ pub const VideoProcessor = struct {
             return error.NvdecInitTimeout;
         }
         
-        std.log.info("Video processing engines initialized successfully");
+        std.log.info("Video processing engines initialized successfully", .{});
     }
     
     pub fn createEncodeSession(self: *Self, config: EncodeConfig) !*EncodeSession {
@@ -149,6 +149,41 @@ pub const VideoProcessor = struct {
         if (status & VIDEO_INTR_ERROR) {
             self.handleVideoError();
         }
+    }
+    
+    pub fn suspendProcessing(self: *Self) !void {
+        // Flush all pending operations
+        for (self.encode_sessions.items) |*session| {
+            session.flush();
+        }
+        for (self.decode_sessions.items) |*session| {
+            session.flush();
+        }
+        
+        // Power down video engines
+        self.nvenc_regs.control = NVENC_CTRL_SUSPEND;
+        self.nvdec_regs.control = NVDEC_CTRL_SUSPEND;
+        
+        std.log.info("Video processing suspended", .{});
+    }
+    
+    pub fn resumeProcessing(self: *Self) !void {
+        // Power up video engines
+        self.nvenc_regs.control = NVENC_CTRL_ENABLE;
+        self.nvdec_regs.control = NVDEC_CTRL_ENABLE;
+        
+        // Wait for engines to be ready
+        var timeout: u32 = 1000;
+        while (timeout > 0 and (self.nvenc_regs.status & NVENC_STATUS_READY) == 0) {
+            std.time.sleep(1000000); // 1ms
+            timeout -= 1;
+        }
+        
+        if (timeout == 0) {
+            return error.NvencResumeTimeout;
+        }
+        
+        std.log.info("Video processing resumed", .{});
     }
     
     fn handleEncodeComplete(self: *Self) void {
@@ -211,7 +246,7 @@ pub const VideoEncoder = struct {
                 .level = .level_4_1,
                 .bitrate_mode = .cbr,
                 .quality = .fast,
-                .preset = .p1,
+                .preset = EncodePresetType.p1,
             },
             .{
                 .name = "H264_QUALITY",
@@ -220,7 +255,7 @@ pub const VideoEncoder = struct {
                 .level = .level_5_1,
                 .bitrate_mode = .vbr,
                 .quality = .hq,
-                .preset = .p4,
+                .preset = EncodePresetType.p4,
             },
         };
         
@@ -233,7 +268,7 @@ pub const VideoEncoder = struct {
                 .level = .level_4_1,
                 .bitrate_mode = .cbr,
                 .quality = .fast,
-                .preset = .p1,
+                .preset = EncodePresetType.p1,
             },
             .{
                 .name = "H265_QUALITY",
@@ -242,7 +277,7 @@ pub const VideoEncoder = struct {
                 .level = .level_5_1,
                 .bitrate_mode = .vbr,
                 .quality = .hq,
-                .preset = .p4,
+                .preset = EncodePresetType.p4,
             },
         };
         
@@ -385,6 +420,17 @@ pub const EncodeSession = struct {
     pub fn waitForCompletion(self: *Self) void {
         self.completion_event.wait();
     }
+    
+    pub fn flush(self: *Self) void {
+        // Flush any pending frames
+        while (self.input_queue.items.len > 0) {
+            // Process pending frames
+            _ = self.input_queue.orderedRemove(0);
+        }
+        
+        // Signal completion
+        self.signalComplete();
+    }
 };
 
 /// Decode Session
@@ -409,6 +455,17 @@ pub const DecodeSession = struct {
     
     pub fn waitForCompletion(self: *Self) void {
         self.completion_event.wait();
+    }
+    
+    pub fn flush(self: *Self) void {
+        // Flush any pending packets
+        while (self.input_queue.items.len > 0) {
+            // Process pending packets
+            _ = self.input_queue.orderedRemove(0);
+        }
+        
+        // Signal completion
+        self.signalComplete();
     }
 };
 
@@ -468,7 +525,7 @@ pub const EncodeQuality = enum {
     lossless,
 };
 
-pub const EncodePreset = enum {
+pub const EncodePresetType = enum {
     p1,  // Fastest
     p2,
     p3,
@@ -476,6 +533,16 @@ pub const EncodePreset = enum {
     p5,
     p6,
     p7,  // Slowest/highest quality
+};
+
+pub const EncodePreset = struct {
+    name: []const u8,
+    codec: VideoCodec,
+    profile: VideoProfile,
+    level: VideoLevel,
+    bitrate_mode: BitrateMode,
+    quality: EncodeQuality,
+    preset: EncodePresetType,
 };
 
 pub const PixelFormat = enum {
@@ -606,6 +673,7 @@ const NVENC_CTRL_ENABLE = 0x00000001;
 const NVENC_CTRL_RESET = 0x00000002;
 const NVENC_CTRL_START = 0x00000004;
 const NVENC_CTRL_STOP = 0x00000008;
+const NVENC_CTRL_SUSPEND = 0x00000010;
 
 // NVENC status bits
 const NVENC_STATUS_READY = 0x00000001;
@@ -617,6 +685,7 @@ const NVDEC_CTRL_ENABLE = 0x00000001;
 const NVDEC_CTRL_RESET = 0x00000002;
 const NVDEC_CTRL_START = 0x00000004;
 const NVDEC_CTRL_STOP = 0x00000008;
+const NVDEC_CTRL_SUSPEND = 0x00000010;
 
 // NVDEC status bits
 const NVDEC_STATUS_READY = 0x00000001;
@@ -636,7 +705,7 @@ test "video processor initialization" {
     
     const device = @as(*anyopaque, @ptrFromInt(0x1000000));
     
-    var mem_manager = try memory.MemoryManager.init(allocator);
+    var mem_manager = memory.MemoryManager.init(allocator);
     defer mem_manager.deinit();
     
     var processor = try VideoProcessor.init(allocator, device, &mem_manager);
@@ -665,7 +734,15 @@ test "video encoder session creation" {
         .bitrate = 5000000,
         .bitrate_mode = .cbr,
         .quality = .balanced,
-        .preset = .p4,
+        .preset = EncodePreset{
+            .name = "P4 - High Quality",
+            .codec = .h264,
+            .profile = .high,
+            .level = .level_4_1,
+            .bitrate_mode = .cbr,
+            .quality = .balanced,
+            .preset = EncodePresetType.p4,
+        },
         .gop_size = 30,
         .b_frames = 2,
         .fps_num = 30,

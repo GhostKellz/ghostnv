@@ -20,6 +20,12 @@ pub const nvenc_encoder = @import("nvenc/encoder.zig");
 pub const gaming_performance = @import("gaming/performance.zig");
 pub const container_runtime = @import("container/runtime.zig");
 
+// Advanced Gaming & AI Features (NEW!)
+pub const dlss3_plus = @import("ai/dlss3_plus.zig");
+pub const kde_wayland = @import("wayland/kde_integration.zig");
+pub const hdr_advanced = @import("display/hdr_advanced.zig");
+pub const vrr_gsync = @import("gaming/vrr_gsync.zig");
+
 pub const NVZIG_MODULE_NAME = "nvzig";
 pub const NVZIG_VERSION_MAJOR = 1;
 pub const NVZIG_VERSION_MINOR = 0;

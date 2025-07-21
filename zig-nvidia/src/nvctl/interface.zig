@@ -446,10 +446,10 @@ pub const NvctlCLI = struct {
         const subcommand = args[0];
         if (std.mem.eql(u8, subcommand, "enable")) {
             try self.interface.set_attribute(0, .gsync_mode, NvctlAttributeValue.fromInteger(2)); // G-SYNC Certified
-            std.debug.print("G-SYNC enabled\n");
+            std.debug.print("G-SYNC enabled\n", .{});
         } else if (std.mem.eql(u8, subcommand, "disable")) {
             try self.interface.set_attribute(0, .gsync_mode, NvctlAttributeValue.fromInteger(0)); // Disabled
-            std.debug.print("G-SYNC disabled\n");
+            std.debug.print("G-SYNC disabled\n", .{});
         } else if (std.mem.eql(u8, subcommand, "ull")) {
             if (args.len > 1) {
                 const enabled = std.mem.eql(u8, args[1], "1") or std.mem.eql(u8, args[1], "true");
@@ -461,7 +461,7 @@ pub const NvctlCLI = struct {
     
     fn handle_get_command(self: *NvctlCLI, args: [][]const u8) !void {
         if (args.len == 0) {
-            std.debug.print("Usage: nvctl get <attribute>\n");
+            std.debug.print("Usage: nvctl get <attribute>\n", .{});
             return;
         }
         
@@ -484,7 +484,7 @@ pub const NvctlCLI = struct {
     
     fn handle_set_command(self: *NvctlCLI, args: [][]const u8) !void {
         if (args.len < 2) {
-            std.debug.print("Usage: nvctl set <attribute> <value>\n");
+            std.debug.print("Usage: nvctl set <attribute> <value>\n", .{});
             return;
         }
         

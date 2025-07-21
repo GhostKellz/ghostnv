@@ -694,6 +694,13 @@ pub const DmaBuffer = struct {
     pub fn sync_for_device(self: *DmaBuffer) void {
         self.region.sync_for_device();
     }
+    
+    pub fn flush(self: *DmaBuffer) void {
+        // Flush cache for non-coherent buffers
+        if (!self.coherent) {
+            self.sync_for_device();
+        }
+    }
 };
 
 pub const MemoryPool = struct {
@@ -782,7 +789,7 @@ pub const MemoryPool = struct {
                 
                 self.used += aligned_size;
                 
-                std.log.debug("Allocated {} memory: {} bytes at 0x{X} for {}", .{
+                std.log.debug("Allocated {s} memory: {} bytes at 0x{X} for {s}", .{
                     self.memory_type.toString(),
                     aligned_size,
                     phys_addr,
@@ -819,7 +826,7 @@ pub const MemoryPool = struct {
                 // Coalesce adjacent free blocks
                 try self.coalesceBlocks();
                 
-                std.log.debug("Freed {} memory: {} bytes at 0x{X}", .{
+                std.log.debug("Freed {s} memory: {} bytes at 0x{X}", .{
                     self.memory_type.toString(),
                     allocated_region.size,
                     allocated_region.physical_address,
@@ -941,7 +948,7 @@ pub const MemoryPool = struct {
             try region.map();
         }
         
-        std.log.debug("Moved {} allocation: 0x{X} -> 0x{X} ({} bytes)", .{
+        std.log.debug("Moved {s} allocation: 0x{X} -> 0x{X} ({} bytes)", .{
             region.usage.toString(),
             old_addr,
             new_phys_addr,
@@ -1239,6 +1246,55 @@ pub const MemoryManager = struct {
         }
         
         std.log.info("Total allocated: {} MB", .{stats.total_allocated / (1024 * 1024)});
+    }
+    
+    pub fn suspendMemory(self: *MemoryManager) !void {
+        // Flush any pending DMA operations
+        for (self.dma_buffers.items) |*buffer| {
+            if (buffer.coherent) continue; // Already synchronized
+            // Ensure cache coherency before suspend
+            buffer.flush();
+        }
+        
+        std.log.info("Memory manager suspended", .{});
+    }
+    
+    pub fn resumeMemory(self: *MemoryManager) !void {
+        // Reinitialize any hardware-dependent state
+        if (self.pci_device) |device| {
+            // Restore BAR mappings if needed
+            _ = device;
+        }
+        
+        std.log.info("Memory manager resumed", .{});
+    }
+    
+    pub fn getMemoryUsage(self: *MemoryManager) MemoryUsage {
+        var usage: MemoryUsage = .{
+            .vram_used = 0,
+            .vram_total = 0,
+            .system_used = 0,
+            .system_total = 0,
+            .gart_used = 0,
+            .gart_total = 0,
+        };
+        
+        if (self.vram_pool) |pool| {
+            usage.vram_used = pool.used_size;
+            usage.vram_total = pool.total_size;
+        }
+        
+        if (self.system_pool) |pool| {
+            usage.system_used = pool.used_size;
+            usage.system_total = pool.total_size;
+        }
+        
+        if (self.gart_pool) |pool| {
+            usage.gart_used = pool.used_size;
+            usage.gart_total = pool.total_size;
+        }
+        
+        return usage;
     }
 };
 

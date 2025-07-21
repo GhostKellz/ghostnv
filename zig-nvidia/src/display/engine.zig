@@ -169,6 +169,30 @@ pub const DisplayEngine = struct {
         
         std.log.info("Set HDR mode on head {}: {}", .{ head_id, hdr_mode });
     }
+    
+    pub fn suspendDisplay(self: *Self) !void {
+        // Save current display state
+        for (self.heads, 0..) |*head, i| {
+            // Power down display head
+            head.is_active = false;
+            std.log.info("Suspended display head {}", .{i});
+        }
+        
+        std.log.info("Display engine suspended", .{});
+    }
+    
+    pub fn resumeDisplay(self: *Self) !void {
+        // Restore display state
+        for (self.heads, 0..) |*head, i| {
+            // Restore display head state
+            if (head.current_mode) |_| {
+                head.is_active = true;
+                std.log.info("Resumed display head {}", .{i});
+            }
+        }
+        
+        std.log.info("Display engine resumed", .{});
+    }
 };
 
 /// Individual Display Head (CRTC)
@@ -190,6 +214,9 @@ pub const DisplayHead = struct {
     hdr_mode: HDRMode,
     color_space: ColorSpace,
     
+    // Display state
+    is_active: bool,
+    
     // Hardware registers
     crtc_regs: *volatile CRTCRegisters,
     
@@ -205,6 +232,7 @@ pub const DisplayHead = struct {
             .vrr_max_hz = 0,
             .hdr_mode = .sdr,
             .color_space = .srgb,
+            .is_active = false,
             .crtc_regs = undefined,
         };
     }

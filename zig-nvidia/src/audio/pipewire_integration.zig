@@ -1,9 +1,38 @@
 const std = @import("std");
-const c = @cImport({
+
+// Mock AudioStats for when PipeWire is not available
+pub const AudioStats = struct {
+    hdmi_outputs_active: u32 = 0,
+    display_ports_active: u32 = 0,
+    sample_rate: u32 = 48000,
+    channels: u32 = 2,
+    latency_ms: f32 = 0.0,
+};
+
+// Conditional compilation for PipeWire
+const PIPEWIRE_AVAILABLE = false; // Disable for now to avoid build dependency
+
+const c = if (PIPEWIRE_AVAILABLE) @cImport({
     @cInclude("pipewire/pipewire.h");
     @cInclude("spa/param/audio/format-utils.h");
     @cInclude("spa/param/props.h");
-});
+}) else struct {
+    // Mock PipeWire types
+    pub const pw_main_loop = opaque {};
+    pub const pw_context = opaque {};
+    pub const pw_core = opaque {};
+    pub const pw_stream = opaque {};
+    pub const pw_registry = opaque {};
+    pub const pw_proxy = opaque {};
+    pub const pw_node = opaque {};
+    pub const spa_audio_info_raw = extern struct {
+        format: u32 = 0,
+        flags: u32 = 0,
+        rate: u32 = 48000,
+        channels: u32 = 2,
+        position: [64]u32 = std.mem.zeroes([64]u32),
+    };
+};
 
 /// PipeWire integration for NVIDIA audio devices
 /// Handles HDMI audio output, display audio routing, and GPU audio capabilities

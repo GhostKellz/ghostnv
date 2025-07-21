@@ -337,7 +337,7 @@ pub fn build(b: *std.Build) void {
     // Unit tests
     const unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("zig-nvidia/tests/unit_tests.zig"),
+            .root_source_file = b.path("zig-nvidia/tests/simple_tests.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{

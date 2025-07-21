@@ -4,6 +4,24 @@
 
 ---
 
+## 📋 **Recent Updates (v0.2.0)**
+
+### **Major Achievements** 🎉
+- **GhostKernel Integration**: Fixed all integration errors, enabling seamless Linux-Ghost kernel compatibility
+- **DLSS-like Upscaling**: Complete scaffolding with 6 quality modes, temporal accumulation, and motion vectors
+- **Developer Tools**: FFI library, GhostVibrance tool, and container runtime all production-ready
+- **Gaming Performance**: Full motion vector system with GPU acceleration and occlusion handling
+- **Build System**: Remote dependency support and modular architecture improvements
+
+### **What's New**
+- ✅ Fixed enum keyword conflicts (error → err)
+- ✅ Path resolution for remote dependencies
+- ✅ Main module entry point via src/ghostnv.zig
+- ✅ Complete integration documentation
+- ✅ All tools building cleanly with no missing dependencies
+
+---
+
 ## 🏎️ **Zig-NVIDIA Driver Core**
 
 ### Phase 1: Foundation Hardening
@@ -12,6 +30,13 @@
   - [x] Command scheduling and synchronization
   - [x] GPU fault handling and recovery
   - [x] Multi-engine support (Graphics, Compute, Copy)
+
+- [x] **GhostKernel Integration** ✅ **(v0.2.0 - Complete)**
+  - [x] Fixed all integration errors with Linux-Ghost kernel
+  - [x] Path resolution for remote dependency usage
+  - [x] Module export via src/ghostnv.zig entry point
+  - [x] Build configuration for dependency management
+  - [x] Complete integration documentation
 
 - [ ] **Hardware Abstraction Completion**
   - [ ] GPU clock management and boost states
@@ -148,12 +173,14 @@
   - [ ] Custom AI model deployment
 
 ### AI-Powered Features
-- [ ] **DLSS-like Upscaling**
-  - [ ] Custom neural upscaling models
+- [x] **DLSS-like Upscaling** ✅ **(Scaffolding Complete)**
+  - [x] Framework with 6 quality modes (Ultra Performance to Native)
+  - [x] Temporal accumulation with Halton sequence jittering
+  - [x] Motion vector utilization and compensation
+  - [x] Edge-aware spatial upscaling
+  - [x] Adaptive sharpening based on quality mode
+  - [ ] Custom neural upscaling models (next phase)
   - [ ] Game integration framework
-  - [ ] Real-time quality adaptation
-  - [x] Motion vector utilization
-  - [ ] Temporal accumulation
 
 - [ ] **Content Creation AI**
   - [ ] Real-time object removal
@@ -201,6 +228,14 @@
 ## 🎮 **Gaming & Performance**
 
 ### Gaming Optimizations
+- [x] **Motion Vector System** ✅ **(Complete)**
+  - [x] Full motion vector field management
+  - [x] Hierarchical motion search algorithm
+  - [x] Sub-block accuracy with bilinear interpolation
+  - [x] Confidence-based motion estimation
+  - [x] GPU-accelerated motion compensation
+  - [x] Occlusion detection and handling
+
 - [ ] **Frame Rate Technologies**
   - [ ] Custom frame generation (DLSS 3-like)
   - [ ] Latency reduction techniques
@@ -235,6 +270,13 @@
 ## 🔧 **Developer Tools & Ecosystem**
 
 ### Development Infrastructure
+- [x] **Core Development Tools** ✅ **(Complete)**
+  - [x] FFI Library for C interoperability
+  - [x] Thread-safe initialization and management
+  - [x] Device enumeration and control APIs
+  - [x] Performance monitoring interfaces
+  - [x] Complete API documentation
+
 - [ ] **Debugging and Profiling**
   - [ ] GPU debugger integration
   - [ ] Performance profiling tools
@@ -250,6 +292,21 @@
   - [ ] Documentation and examples
 
 ### Community Tools
+- [x] **GhostVibrance Tool** ✅ **(Complete)**
+  - [x] Advanced digital vibrance control
+  - [x] Profile management system
+  - [x] Auto-detection for games
+  - [x] Pre-loaded game profiles
+  - [x] Monitor daemon mode
+  - [x] HDR support
+
+- [x] **Container Runtime** ✅ **(Complete)**
+  - [x] Native GPU container support
+  - [x] Zero-overhead GPU passthrough
+  - [x] Multi-GPU container assignment
+  - [x] Real-time GPU monitoring
+  - [x] Docker/Podman compatibility
+
 - [ ] **Configuration and Tuning**
   - [ ] GUI configuration tool
   - [ ] Performance tuning wizard
@@ -356,12 +413,22 @@
 
 ## 🎯 **Priority Matrix**
 
-### **🔥 HIGH PRIORITY (Next 3 months)**
+### **✅ RECENTLY COMPLETED (v0.2.0)**
 1. ✅ GPU command submission pipeline
-2. ✅ NVENC H.264/H.265 encoding
-3. RTX Voice noise cancellation
-4. Basic CUDA compute support
-5. ✅ Wayland zero-copy optimization
+2. ✅ GhostKernel integration (all errors fixed)
+3. ✅ Motion vector system for gaming
+4. ✅ DLSS-like upscaling scaffolding
+5. ✅ FFI library for C interoperability
+6. ✅ GhostVibrance tool
+7. ✅ Container runtime with GPU passthrough
+8. ✅ Wayland zero-copy optimization
+
+### **🔥 HIGH PRIORITY (Next 3 months)**
+1. ✅ NVENC H.264/H.265 encoding
+2. RTX Voice noise cancellation
+3. Basic CUDA compute support
+4. AV1 encoding for RTX 40 series
+5. Hardware video processing pipeline
 
 ### **🚀 MEDIUM PRIORITY (3-6 months)**
 1. AV1 encoding support

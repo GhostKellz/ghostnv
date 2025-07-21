@@ -263,7 +263,7 @@ test "device initialization" {
     const allocator = std.testing.allocator;
     
     // This would fail in most test environments without actual hardware
-    const device = NvzigDevice.init(allocator, 0) catch return;
+    var device = NvzigDevice.init(allocator, 0) catch return;
     defer device.deinit();
     
     try std.testing.expect(device.index == 0);

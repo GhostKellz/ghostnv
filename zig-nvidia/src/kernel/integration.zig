@@ -47,7 +47,7 @@ pub const GhostKernelIntegration = struct {
         self.command_processor = try command.CommandProcessor.init(allocator, null);
         
         // Initialize CUDA runtime
-        self.cuda_runtime = try cuda.CudaRuntime.init(allocator, &self.command_processor.scheduler);
+        self.cuda_runtime = try cuda.CudaRuntime.init(allocator, self.memory_manager);
         
         // Initialize display engine
         self.display_engine = try display.DisplayEngine.init(allocator, kernel_ctx, self.memory_manager);
@@ -137,7 +137,7 @@ pub const GhostKernelIntegration = struct {
     
     /// Driver shutdown function
     pub fn shutdownDriver(self: *Self) !void {
-        std.log.info("Shutting down GhostNV driver...");
+        std.log.info("Shutting down GhostNV driver...", .{});
         
         self.driver_state = .stopping;
         
@@ -159,7 +159,7 @@ pub const GhostKernelIntegration = struct {
     
     /// Handle system suspend
     pub fn suspendDriver(self: *Self) !void {
-        std.log.info("Suspending GhostNV driver...");
+        std.log.info("Suspending GhostNV driver...", .{});
         
         self.driver_state = .suspending;
         
@@ -177,7 +177,7 @@ pub const GhostKernelIntegration = struct {
     
     /// Handle system resume
     pub fn resumeDriver(self: *Self) !void {
-        std.log.info("Resuming GhostNV driver...");
+        std.log.info("Resuming GhostNV driver...", .{});
         
         self.driver_state = .resuming;
         

@@ -830,7 +830,7 @@ pub const Fence = struct {
     pub fn signal(self: *Fence, value: u64) void {
         self.value.store(value, .release);
         self.signaled.store(true, .release);
-        self.timestamp = std.time.nanoTimestamp();
+        self.timestamp = @intCast(std.time.nanoTimestamp());
     }
     
     pub fn wait(self: *Fence, timeout_ms: u32) !void {
@@ -898,7 +898,7 @@ pub const RingBuffer = struct {
     
     pub fn deinit(self: *RingBuffer) void {
         // Clean up remaining commands
-        for (self.commands) |*cmd| {
+        for (&self.commands) |*cmd| {
             if (cmd.*) |*command| {
                 command.deinit(self.allocator);
             }
@@ -1077,7 +1077,7 @@ pub const RingBuffer = struct {
     
     pub fn reset(self: *RingBuffer) void {
         // Clean up all commands
-        for (self.commands) |*cmd| {
+        for (&self.commands) |*cmd| {
             if (cmd.*) |*command| {
                 command.deinit(self.allocator);
             }
@@ -1198,7 +1198,7 @@ pub const CommandScheduler = struct {
         return CommandScheduler{
             .allocator = allocator,
             .queues = std.ArrayList(CommandQueue).init(allocator),
-            .fences = std.HashMap(u32, Fence, std.HashMap.DefaultContext(u32), std.HashMap.default_max_load_percentage).init(allocator),
+            .fences = std.HashMap(u32, Fence, std.hash_map.AutoContext(u32), 80).init(allocator),
             .next_fence_id = std.atomic.Value(u32).init(1),
             .memory_manager = memory_manager,
         };

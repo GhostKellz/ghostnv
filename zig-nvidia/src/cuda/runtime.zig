@@ -275,6 +275,49 @@ pub const CudaRuntime = struct {
         _ = self;
         return try module.getFunction(name);
     }
+    
+    pub fn suspendCompute(self: *Self) !void {
+        // Synchronize all active streams
+        for (self.stream_manager.streams.items) |*stream| {
+            try self.streamSynchronize(stream);
+        }
+        
+        // Stop all compute units
+        for (self.compute_units) |*cu| {
+            cu.is_idle = true;
+        }
+        
+        std.log.info("CUDA compute suspended", .{});
+    }
+    
+    pub fn resumeCompute(self: *Self) !void {
+        // Reinitialize compute units
+        for (self.compute_units) |*cu| {
+            cu.is_idle = false;
+        }
+        
+        std.log.info("CUDA compute resumed", .{});
+    }
+    
+    pub fn handleInterrupt(self: *Self, interrupt_vector: u32) void {
+        _ = self;
+        _ = interrupt_vector;
+        // Handle CUDA-related interrupts
+    }
+    
+    pub fn getGpuUtilization(self: *Self) f32 {
+        var active_count: u32 = 0;
+        
+        for (self.compute_units) |cu| {
+            if (!cu.is_idle) {
+                active_count += 1;
+            }
+        }
+        
+        if (self.compute_units.len == 0) return 0.0;
+        
+        return @as(f32, @floatFromInt(active_count)) / @as(f32, @floatFromInt(self.compute_units.len)) * 100.0;
+    }
 };
 
 /// CUDA Device Context
@@ -783,18 +826,19 @@ test "cuda runtime initialization" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var scheduler = try command.CommandScheduler.init(allocator);
+    var mem_manager = memory.MemoryManager.init(allocator);
+    var scheduler = command.CommandScheduler.init(allocator, &mem_manager);
     defer scheduler.deinit();
 
-    var runtime = CudaRuntime.init(allocator, &scheduler);
+    var runtime = CudaRuntime.init(allocator, &mem_manager);
     defer runtime.deinit();
 
-    try runtime.initialize();
+    // runtime.initialize(); // Not needed, init() handles initialization
 
-    const device_count = runtime.get_device_count();
+    const device_count = runtime.getDeviceCount();
     try std.testing.expect(device_count > 0);
 
-    const props = runtime.get_device_properties(0);
+    const props = try runtime.getDeviceProperties(0);
     try std.testing.expect(props != null);
 }
 
@@ -803,21 +847,22 @@ test "cuda context and streams" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var scheduler = try command.CommandScheduler.init(allocator);
+    var mem_manager = memory.MemoryManager.init(allocator);
+    var scheduler = command.CommandScheduler.init(allocator, &mem_manager);
     defer scheduler.deinit();
 
-    var runtime = CudaRuntime.init(allocator, &scheduler);
+    var runtime = CudaRuntime.init(allocator, &mem_manager);
     defer runtime.deinit();
 
-    try runtime.initialize();
+    // runtime.initialize(); // Not needed, init() handles initialization
 
-    const context_id = try runtime.create_context(0, 0);
-    const context = runtime.get_context(context_id).?;
+    // Set the current device
+    try runtime.setDevice(0);
+    // Test stream creation
+    const stream = try runtime.stream_manager.createStream();
+    defer stream.deinit();
 
-    const stream_id = try context.create_stream(0, 0);
-    const stream = context.get_stream(stream_id).?;
-
-    try std.testing.expect(stream.id == stream_id);
+    try std.testing.expect(stream.id >= 0);
 }
 
 test "cuda memory management" {
@@ -825,21 +870,22 @@ test "cuda memory management" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var scheduler = try command.CommandScheduler.init(allocator);
+    var mem_manager = memory.MemoryManager.init(allocator);
+    var scheduler = command.CommandScheduler.init(allocator, &mem_manager);
     defer scheduler.deinit();
 
-    var runtime = CudaRuntime.init(allocator, &scheduler);
+    var runtime = CudaRuntime.init(allocator, &mem_manager);
     defer runtime.deinit();
 
-    try runtime.initialize();
+    // runtime.initialize(); // Not needed, init() handles initialization
 
-    const context_id = try runtime.create_context(0, 0);
-    const context = runtime.get_context(context_id).?;
+    // Set the current device
+    try runtime.setDevice(0);
+    // Test memory allocation
+    const ptr = try runtime.malloc(1024 * 1024); // 1MB
+    try std.testing.expect(ptr.address != 0);
 
-    const ptr = try context.malloc(1024 * 1024); // 1MB
-    try std.testing.expect(ptr != 0);
-
-    try context.free(ptr);
+    try runtime.free(ptr);
 }
 
 // Missing types and structures for CUDA runtime
