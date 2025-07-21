@@ -1,6 +1,9 @@
 const std = @import("std");
 const memory = @import("../hal/memory.zig");
 const command = @import("../hal/command.zig");
+const bezel = @import("bezel_correction.zig");
+const spanning = @import("spanning_manager.zig");
+const timing = @import("timing_manager.zig");
 
 /// NVIDIA Display Engine Implementation
 /// Handles all display output functionality including multi-monitor, VRR, HDR
@@ -9,10 +12,12 @@ pub const DisplayEngine = struct {
 
     allocator: std.mem.Allocator,
     heads: []DisplayHead,
-    compositor: WaylandCompositor,
-    shader_compiler: ShaderCompiler,
-    pipeline_cache: PipelineCache,
     memory_manager: *memory.MemoryManager,
+    
+    // Advanced display features
+    bezel_corrector: bezel.BezelCorrector,
+    spanning_manager: spanning.SpanningManager,
+    timing_manager: timing.TimingManager,
     
     // Hardware state
     bar0: *volatile u8,
@@ -34,10 +39,10 @@ pub const DisplayEngine = struct {
         self.* = Self{
             .allocator = allocator,
             .heads = self.heads,
-            .compositor = try WaylandCompositor.init(allocator),
-            .shader_compiler = try ShaderCompiler.init(allocator),
-            .pipeline_cache = try PipelineCache.init(allocator),
             .memory_manager = mem_manager,
+            .bezel_corrector = bezel.BezelCorrector.init(allocator),
+            .spanning_manager = try spanning.SpanningManager.init(allocator),
+            .timing_manager = timing.TimingManager.init(allocator),
             .bar0 = @ptrCast(@alignCast(device)),
             .display_regs = @ptrCast(@alignCast(@as([*]u8, @ptrCast(device)) + DISPLAY_REGS_OFFSET)),
             .frame_stats = .{},
@@ -55,9 +60,10 @@ pub const DisplayEngine = struct {
         }
         self.allocator.free(self.heads);
         
-        self.compositor.deinit();
-        self.shader_compiler.deinit();
-        self.pipeline_cache.deinit();
+        // Clean up advanced display features
+        self.bezel_corrector.deinit();
+        self.spanning_manager.deinit();
+        self.timing_manager.deinit();
         
         self.allocator.destroy(self);
     }
@@ -103,9 +109,6 @@ pub const DisplayEngine = struct {
     fn handleVBlankInterrupt(self: *Self) void {
         // Update frame statistics
         self.frame_stats.vblank_count += 1;
-        
-        // Notify compositor
-        self.compositor.handleVBlank();
         
         // Process any pending flips
         for (self.heads) |*head| {

@@ -1,6 +1,9 @@
 const std = @import("std");
 const drm = @import("../drm/driver.zig");
 const memory = @import("../hal/memory.zig");
+const cursor_plane = @import("cursor_plane.zig");
+const overlay_plane = @import("overlay_plane.zig");
+const damage_tracker = @import("damage_tracker.zig");
 const print = std.debug.print;
 
 pub const WaylandError = error{
@@ -161,7 +164,20 @@ pub const WaylandCompositor = struct {
     vsync_enabled: bool,
     direct_scanout: bool,
     
-    pub fn init(allocator: std.mem.Allocator, drm_driver: *drm.DrmDriver, mem_manager: *memory.MemoryManager) WaylandCompositor {
+    // Performance optimizations
+    cursor_manager: cursor_plane.CursorManager,
+    overlay_manager: overlay_plane.OverlayManager,
+    damage_tracker: damage_tracker.SurfaceDamageTracker,
+    screen_width: u32,
+    screen_height: u32,
+    
+    // Performance counters
+    frames_rendered: u64,
+    total_damage_area: u64,
+    zero_copy_frames: u64,
+    direct_scanout_frames: u64,
+    
+    pub fn init(allocator: std.mem.Allocator, drm_driver: *drm.DrmDriver, mem_manager: *memory.MemoryManager, width: u32, height: u32) !WaylandCompositor {
         return WaylandCompositor{
             .allocator = allocator,
             .drm_driver = drm_driver,
@@ -171,6 +187,15 @@ pub const WaylandCompositor = struct {
             .next_id = 1,
             .vsync_enabled = true,
             .direct_scanout = false,
+            .cursor_manager = cursor_plane.CursorManager.init(allocator),
+            .overlay_manager = overlay_plane.OverlayManager.init(allocator),
+            .damage_tracker = try damage_tracker.SurfaceDamageTracker.init(allocator, width, height),
+            .screen_width = width,
+            .screen_height = height,
+            .frames_rendered = 0,
+            .total_damage_area = 0,
+            .zero_copy_frames = 0,
+            .direct_scanout_frames = 0,
         };
     }
     
@@ -188,6 +213,11 @@ pub const WaylandCompositor = struct {
             entry.value_ptr.deinit(self.memory_manager);
         }
         self.buffers.deinit();
+        
+        // Clean up performance optimization components
+        self.cursor_manager.deinit();
+        self.overlay_manager.deinit();
+        self.damage_tracker.deinit();
     }
     
     pub fn create_surface(self: *WaylandCompositor) !u32 {

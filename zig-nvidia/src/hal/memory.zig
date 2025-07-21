@@ -3,6 +3,269 @@ const Allocator = std.mem.Allocator;
 const pci = @import("pci.zig");
 const linux = std.os.linux;
 
+/// Advanced Memory Management with Copy Engine Optimization and Smart Caching
+/// Provides unified virtual address space, optimized transfers, and intelligent caching
+
+pub const CopyEngine = struct {
+    const Self = @This();
+    
+    engine_id: u8,
+    available: bool,
+    current_job: ?CopyJob,
+    job_queue: std.ArrayList(CopyJob),
+    performance_counters: CopyPerfCounters,
+    
+    pub const CopyJob = struct {
+        id: u64,
+        src_addr: u64,
+        dst_addr: u64,
+        size: u64,
+        priority: CopyPriority,
+        direction: CopyDirection,
+        completion_callback: ?fn(job_id: u64) void,
+        created_time: u64,
+        started_time: u64,
+        completed_time: u64,
+    };
+    
+    pub const CopyPriority = enum(u8) {
+        low = 0,
+        normal = 1,
+        high = 2,
+        critical = 3,
+    };
+    
+    pub const CopyDirection = enum(u8) {
+        cpu_to_gpu = 0,
+        gpu_to_cpu = 1,
+        gpu_to_gpu = 2,
+        cpu_to_cpu = 3,
+    };
+    
+    pub const CopyPerfCounters = struct {
+        total_jobs: u64,
+        completed_jobs: u64,
+        failed_jobs: u64,
+        total_bytes: u64,
+        average_bandwidth_mbps: f32,
+        peak_bandwidth_mbps: f32,
+        average_latency_us: f32,
+    };
+    
+    pub fn init(allocator: Allocator, engine_id: u8) Self {
+        return Self{
+            .engine_id = engine_id,
+            .available = true,
+            .current_job = null,
+            .job_queue = std.ArrayList(CopyJob).init(allocator),
+            .performance_counters = std.mem.zeroes(CopyPerfCounters),
+        };
+    }
+    
+    pub fn deinit(self: *Self) void {
+        self.job_queue.deinit();
+    }
+    
+    pub fn submitJob(self: *Self, job: CopyJob) !void {
+        try self.job_queue.append(job);
+        
+        // Sort by priority (critical first)
+        std.sort.insertion(CopyJob, self.job_queue.items, {}, struct {
+            fn lessThan(_: void, a: CopyJob, b: CopyJob) bool {
+                return @intFromEnum(a.priority) > @intFromEnum(b.priority);
+            }
+        }.lessThan);
+    }
+    
+    pub fn processNextJob(self: *Self) bool {
+        if (self.job_queue.items.len == 0 or !self.available) return false;
+        
+        self.current_job = self.job_queue.orderedRemove(0);
+        self.available = false;
+        
+        // Update performance tracking
+        self.performance_counters.total_jobs += 1;
+        if (self.current_job) |*job| {
+            job.started_time = @intCast(std.time.microTimestamp());
+        }
+        
+        return true;
+    }
+    
+    pub fn completeCurrentJob(self: *Self, success: bool) void {
+        if (self.current_job) |job| {
+            const completion_time = @as(u64, @intCast(std.time.microTimestamp()));
+            const duration = completion_time - job.started_time;
+            
+            if (success) {
+                self.performance_counters.completed_jobs += 1;
+                self.performance_counters.total_bytes += job.size;
+                
+                // Update bandwidth calculation
+                const bandwidth_mbps = (@as(f32, @floatFromInt(job.size)) / 1_000_000.0) / 
+                                     (@as(f32, @floatFromInt(duration)) / 1_000_000.0);
+                
+                if (bandwidth_mbps > self.performance_counters.peak_bandwidth_mbps) {
+                    self.performance_counters.peak_bandwidth_mbps = bandwidth_mbps;
+                }
+                
+                // Update average bandwidth (moving average)
+                self.performance_counters.average_bandwidth_mbps = 
+                    (self.performance_counters.average_bandwidth_mbps * 0.9) + (bandwidth_mbps * 0.1);
+                
+                // Update average latency
+                const latency_us = @as(f32, @floatFromInt(duration));
+                self.performance_counters.average_latency_us = 
+                    (self.performance_counters.average_latency_us * 0.9) + (latency_us * 0.1);
+                
+                if (job.completion_callback) |callback| {
+                    callback(job.id);
+                }
+            } else {
+                self.performance_counters.failed_jobs += 1;
+            }
+            
+            self.current_job = null;
+        }
+        
+        self.available = true;
+    }
+};
+
+pub const SmartCache = struct {
+    const Self = @This();
+    
+    allocator: Allocator,
+    cache_size: u64,
+    cache_entries: std.HashMap(u64, CacheEntry, std.hash_map.AutoContext(u64), 80),
+    lru_list: std.ArrayList(u64),
+    hit_count: u64,
+    miss_count: u64,
+    eviction_count: u64,
+    
+    pub const CacheEntry = struct {
+        address: u64,
+        size: u64,
+        data: []u8,
+        access_count: u32,
+        last_access_time: u64,
+        dirty: bool,
+        pinned: bool,
+        numa_node: u8,
+    };
+    
+    pub fn init(allocator: Allocator, cache_size: u64) !Self {
+        return Self{
+            .allocator = allocator,
+            .cache_size = cache_size,
+            .cache_entries = std.HashMap(u64, CacheEntry, std.hash_map.AutoContext(u64), 80).init(allocator),
+            .lru_list = std.ArrayList(u64).init(allocator),
+            .hit_count = 0,
+            .miss_count = 0,
+            .eviction_count = 0,
+        };
+    }
+    
+    pub fn deinit(self: *Self) void {
+        var iterator = self.cache_entries.iterator();
+        while (iterator.next()) |entry| {
+            self.allocator.free(entry.value_ptr.data);
+        }
+        self.cache_entries.deinit();
+        self.lru_list.deinit();
+    }
+    
+    pub fn lookup(self: *Self, address: u64, size: u64) ?[]const u8 {
+        if (self.cache_entries.get(address)) |entry| {
+            if (entry.size >= size) {
+                self.hit_count += 1;
+                self.updateLRU(address);
+                return entry.data[0..size];
+            }
+        }
+        
+        self.miss_count += 1;
+        return null;
+    }
+    
+    pub fn insert(self: *Self, address: u64, data: []const u8, numa_node: u8) !void {
+        // Check if we need to evict entries
+        while (self.getCurrentCacheSize() + data.len > self.cache_size) {
+            try self.evictLRU();
+        }
+        
+        // Allocate memory for cached data
+        const cached_data = try self.allocator.dupe(u8, data);
+        
+        const entry = CacheEntry{
+            .address = address,
+            .size = data.len,
+            .data = cached_data,
+            .access_count = 1,
+            .last_access_time = @intCast(std.time.microTimestamp()),
+            .dirty = false,
+            .pinned = false,
+            .numa_node = numa_node,
+        };
+        
+        try self.cache_entries.put(address, entry);
+        try self.lru_list.append(address);
+    }
+    
+    fn getCurrentCacheSize(self: *Self) u64 {
+        var total_size: u64 = 0;
+        var iterator = self.cache_entries.valueIterator();
+        while (iterator.next()) |entry| {
+            total_size += entry.size;
+        }
+        return total_size;
+    }
+    
+    fn updateLRU(self: *Self, address: u64) void {
+        // Move to end of LRU list (most recently used)
+        if (std.mem.indexOfScalar(u64, self.lru_list.items, address)) |index| {
+            _ = self.lru_list.orderedRemove(index);
+        }
+        self.lru_list.append(address) catch {};
+    }
+    
+    fn evictLRU(self: *Self) !void {
+        if (self.lru_list.items.len == 0) return;
+        
+        // Find first non-pinned entry
+        for (0..self.lru_list.items.len) |i| {
+            const address = self.lru_list.items[i];
+            if (self.cache_entries.get(address)) |entry| {
+                if (!entry.pinned) {
+                    self.allocator.free(entry.data);
+                    _ = self.cache_entries.remove(address);
+                    _ = self.lru_list.orderedRemove(i);
+                    self.eviction_count += 1;
+                    return;
+                }
+            }
+        }
+    }
+    
+    pub fn getHitRate(self: *Self) f32 {
+        const total = self.hit_count + self.miss_count;
+        if (total == 0) return 0.0;
+        return @as(f32, @floatFromInt(self.hit_count)) / @as(f32, @floatFromInt(total));
+    }
+    
+    pub fn pin(self: *Self, address: u64) void {
+        if (self.cache_entries.getPtr(address)) |entry| {
+            entry.pinned = true;
+        }
+    }
+    
+    pub fn unpin(self: *Self, address: u64) void {
+        if (self.cache_entries.getPtr(address)) |entry| {
+            entry.pinned = false;
+        }
+    }
+};
+
 /// Unified Virtual Addressing (UVA) Support
 /// Provides unified virtual address space between CPU and GPU
 pub const UVAManager = struct {
@@ -12,6 +275,9 @@ pub const UVAManager = struct {
     virtual_address_space: AddressSpace,
     cpu_gpu_mappings: std.AutoHashMap(u64, MappingInfo),
     numa_nodes: []NumaNode,
+    copy_engines: [4]CopyEngine,
+    smart_cache: SmartCache,
+    next_job_id: u64,
     
     pub const AddressSpace = struct {
         base_address: u64,
@@ -50,7 +316,15 @@ pub const UVAManager = struct {
             .virtual_address_space = undefined,
             .cpu_gpu_mappings = std.AutoHashMap(u64, MappingInfo).init(allocator),
             .numa_nodes = &.{},
+            .copy_engines = undefined,
+            .smart_cache = try SmartCache.init(allocator, 512 * 1024 * 1024), // 512MB cache
+            .next_job_id = 1,
         };
+        
+        // Initialize copy engines
+        for (0..4) |i| {
+            self.copy_engines[i] = CopyEngine.init(allocator, @intCast(i));
+        }
         
         // Initialize 48-bit virtual address space
         const vas_size = @as(u64, 1) << 48; // 256TB virtual address space
@@ -68,6 +342,12 @@ pub const UVAManager = struct {
     }
     
     pub fn deinit(self: *Self) void {
+        // Clean up copy engines
+        for (&self.copy_engines) |*engine| {
+            engine.deinit();
+        }
+        
+        self.smart_cache.deinit();
         self.virtual_address_space.page_table.deinit();
         self.virtual_address_space.used_regions.deinit();
         self.cpu_gpu_mappings.deinit();
@@ -202,6 +482,149 @@ pub const UVAManager = struct {
         
         // In real implementation, use __free_pages()
     }
+    
+    /// Optimized copy operation using available copy engines
+    pub fn copyMemoryAsync(self: *Self, src: u64, dst: u64, size: u64, priority: CopyEngine.CopyPriority, callback: ?fn(u64) void) !u64 {
+        const job_id = self.next_job_id;
+        self.next_job_id += 1;
+        
+        // Determine copy direction and select optimal engine
+        const direction = self.determineCopyDirection(src, dst);
+        const engine_id = self.selectOptimalCopyEngine(direction, size);
+        
+        const job = CopyEngine.CopyJob{
+            .id = job_id,
+            .src_addr = src,
+            .dst_addr = dst,
+            .size = size,
+            .priority = priority,
+            .direction = direction,
+            .completion_callback = callback,
+            .created_time = @intCast(std.time.microTimestamp()),
+            .started_time = 0,
+            .completed_time = 0,
+        };
+        
+        try self.copy_engines[engine_id].submitJob(job);
+        return job_id;
+    }
+    
+    /// Synchronous copy with smart caching
+    pub fn copyMemoryWithCache(self: *Self, src: u64, dst: u64, size: u64) !void {
+        // Check if data is cached
+        if (self.smart_cache.lookup(src, size)) |cached_data| {
+            // Direct copy from cache
+            const dst_ptr: [*]u8 = @ptrFromInt(dst);
+            @memcpy(dst_ptr[0..size], cached_data);
+            return;
+        }
+        
+        // Perform copy and cache result
+        const src_ptr: [*]const u8 = @ptrFromInt(src);
+        const dst_ptr: [*]u8 = @ptrFromInt(dst);
+        @memcpy(dst_ptr[0..size], src_ptr[0..size]);
+        
+        // Cache frequently accessed data
+        const numa_node = self.getNumaNodeForAddress(src);
+        try self.smart_cache.insert(src, src_ptr[0..size], numa_node);
+    }
+    
+    fn determineCopyDirection(self: *Self, src: u64, dst: u64) CopyEngine.CopyDirection {
+        _ = self;
+        const gpu_mem_start = 0x200000000; // 8GB+ is GPU memory
+        
+        const src_is_gpu = src >= gpu_mem_start;
+        const dst_is_gpu = dst >= gpu_mem_start;
+        
+        if (!src_is_gpu and dst_is_gpu) return .cpu_to_gpu;
+        if (src_is_gpu and !dst_is_gpu) return .gpu_to_cpu;
+        if (src_is_gpu and dst_is_gpu) return .gpu_to_gpu;
+        return .cpu_to_cpu;
+    }
+    
+    fn selectOptimalCopyEngine(self: *Self, direction: CopyEngine.CopyDirection, size: u64) u8 {
+        // Find least busy engine
+        var best_engine: u8 = 0;
+        var min_queue_size: usize = std.math.maxInt(usize);
+        
+        for (0..4) |i| {
+            const engine = &self.copy_engines[i];
+            if (engine.available) {
+                return @intCast(i); // Immediately available engine
+            }
+            
+            if (engine.job_queue.items.len < min_queue_size) {
+                min_queue_size = engine.job_queue.items.len;
+                best_engine = @intCast(i);
+            }
+        }
+        
+        // For large transfers, prefer specific engines
+        if (size > 16 * 1024 * 1024) { // > 16MB
+            return switch (direction) {
+                .cpu_to_gpu => 0, // Engine 0 for uploads
+                .gpu_to_cpu => 1, // Engine 1 for downloads
+                .gpu_to_gpu => 2, // Engine 2 for GPU-GPU
+                .cpu_to_cpu => 3, // Engine 3 for CPU-CPU
+            };
+        }
+        
+        return best_engine;
+    }
+    
+    fn getNumaNodeForAddress(self: *Self, address: u64) u8 {
+        for (self.numa_nodes) |node| {
+            if (address >= node.memory_base and address < node.memory_base + node.memory_size) {
+                return node.node_id;
+            }
+        }
+        return 0; // Default to node 0
+    }
+    
+    /// Process copy engine jobs
+    pub fn processCopyJobs(self: *Self) void {
+        for (&self.copy_engines) |*engine| {
+            if (engine.processNextJob()) {
+                // Job started - in real implementation, this would trigger hardware
+                engine.completeCurrentJob(true); // Simulate success
+            }
+        }
+    }
+    
+    /// Get copy engine performance statistics
+    pub fn getCopyEngineStats(self: *Self) [4]CopyEngine.CopyPerfCounters {
+        var stats: [4]CopyEngine.CopyPerfCounters = undefined;
+        for (0..4) |i| {
+            stats[i] = self.copy_engines[i].performance_counters;
+        }
+        return stats;
+    }
+    
+    /// Get cache statistics  
+    pub fn getCacheStats(self: *Self) struct { hit_rate: f32, size: u64, evictions: u64 } {
+        return .{
+            .hit_rate = self.smart_cache.getHitRate(),
+            .size = self.smart_cache.getCurrentCacheSize(),
+            .evictions = self.smart_cache.eviction_count,
+        };
+    }
+    
+    /// Prefetch data into cache
+    pub fn prefetchToCache(self: *Self, address: u64, size: u64) !void {
+        const numa_node = self.getNumaNodeForAddress(address);
+        const data_ptr: [*]const u8 = @ptrFromInt(address);
+        try self.smart_cache.insert(address, data_ptr[0..size], numa_node);
+    }
+    
+    /// Pin critical data in cache
+    pub fn pinCacheEntry(self: *Self, address: u64) void {
+        self.smart_cache.pin(address);
+    }
+    
+    /// Unpin cache entry
+    pub fn unpinCacheEntry(self: *Self, address: u64) void {
+        self.smart_cache.unpin(address);
+    }
 };
 
 pub const UVAAllocation = struct {
@@ -211,16 +634,16 @@ pub const UVAAllocation = struct {
     coherent: bool,
 };
 
-/// Copy Engine Optimization for Memory Transfers
-pub const CopyEngineOptimizer = struct {
+/// Legacy Copy Engine (use UVAManager copy_engines instead)  
+pub const CopyEngineOptimizer_DEPRECATED = struct {
     const Self = @This();
     
     allocator: Allocator,
-    copy_engines: []CopyEngine,
+    copy_engines: []DeprecatedCopyEngine,
     transfer_queue: std.PriorityQueue(TransferRequest, void, compareTransferPriority),
     active_transfers: std.ArrayList(ActiveTransfer),
     
-    pub const CopyEngine = struct {
+    pub const DeprecatedCopyEngine = struct {
         id: u8,
         available: bool,
         current_transfer: ?*ActiveTransfer,
@@ -253,14 +676,14 @@ pub const CopyEngineOptimizer = struct {
     pub fn init(allocator: Allocator, num_engines: u8) !Self {
         var self = Self{
             .allocator = allocator,
-            .copy_engines = try allocator.alloc(CopyEngine, num_engines),
+            .copy_engines = try allocator.alloc(DeprecatedCopyEngine, num_engines),
             .transfer_queue = std.PriorityQueue(TransferRequest, void, compareTransferPriority).init(allocator, {}),
             .active_transfers = std.ArrayList(ActiveTransfer).init(allocator),
         };
         
         // Initialize copy engines with different capabilities
         for (0..num_engines) |i| {
-            self.copy_engines[i] = CopyEngine{
+            self.copy_engines[i] = DeprecatedCopyEngine{
                 .id = @intCast(i),
                 .available = true,
                 .current_transfer = null,
